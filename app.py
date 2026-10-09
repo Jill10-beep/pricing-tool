@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import inspect
+from io import BytesIO
+import zipfile
 
 import streamlit as st
 
@@ -76,9 +79,14 @@ st.markdown(
 )
 
 st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">上传产品包</div>', unsafe_allow_html=True)
-uploaded = st.file_uploader("上传产品 CSV", type=["csv"], label_visibility="collapsed")
+uploaded_files = st.file_uploader(
+    "上传产品 CSV",
+    type=["csv"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+)
 
-if uploaded is None:
+if not uploaded_files:
     st.markdown(
         """
         <div class="empty-grid">
@@ -97,18 +105,6 @@ if uploaded is None:
         )
     st.stop()
 
-try:
-    loaded = load_csv_bytes(uploaded.getvalue())
-    source = loaded.frame
-except Exception as exc:
-    st.error(f"文件读取失败：{exc}")
-    st.stop()
-
-before_summary = validate_frame(source)
-if before_summary.missing_columns:
-    st.error("缺少必要字段：" + ", ".join(before_summary.missing_columns))
-    st.stop()
-
 if "learned_category_mappings" not in st.session_state:
     st.session_state.learned_category_mappings = {}
 
@@ -117,142 +113,149 @@ with st.expander("品类映射记忆（可选）"):
     if mapping_file is not None:
         try:
             imported = json.loads(mapping_file.getvalue().decode("utf-8"))
-            valid_rule_names = {rule.name for rule in CATEGORY_RULES}
-            valid_imported = {str(key): str(value) for key, value in imported.items() if str(value) in valid_rule_names}
-            st.session_state.learned_category_mappings.update(valid_imported)
-            st.success(f"已导入 {len(valid_imported)} 条品类映射。")
+            valid_names = {rule.name for rule in CATEGORY_RULES}
+            valid = {str(key): str(value) for key, value in imported.items() if str(value) in valid_names}
+            st.session_state.learned_category_mappings.update(valid)
+            st.success(f"已导入 {len(valid)} 条品类映射。")
         except Exception:
-            st.error("映射文件无法读取，请使用本工具导出的 JSON 文件。")
+            st.error("映射文件无法读取。")
 
-st.markdown('<div class="section-kicker">File Overview</div><div class="section-title">文件概览</div>', unsafe_allow_html=True)
-metrics = st.columns(5)
-metrics[0].metric("数据行", f"{before_summary.rows:,}")
-metrics[1].metric("商品", f"{before_summary.products:,}")
-metrics[2].metric("SKU / 变体", f"{before_summary.variants:,}")
-metrics[3].metric("附加图片行", f"{before_summary.image_only_rows:,}")
-metrics[4].metric("字段", f"{len(source.columns):,}")
+st.markdown('<div class="section-kicker">Batch Queue</div><div class="section-title">处理队列</div>', unsafe_allow_html=True)
+queue_cols = st.columns(3)
+queue_cols[0].metric("已上传文件", len(uploaded_files))
 
-try:
-    pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
-except Exception as exc:
-    st.error(f"自动定价失败：{exc}")
-    st.stop()
+completed_outputs: list[tuple[str, bytes]] = []
+needs_attention = 0
 
-if pricing_result.unresolved_handles:
-    unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
-    unresolved_categories = sorted(
-        value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value
-    )
-    if unresolved_categories:
-        st.warning("发现价格表外且无法自动判断的品类。请选择一次参考规则，系统将在当前会话中记住。")
-        selected_mappings = {}
-        rule_names = [rule.name for rule in CATEGORY_RULES]
-        for source_category in unresolved_categories:
-            selected = st.selectbox(
-                f"{source_category} 参考哪个价格品类？",
-                ["请选择"] + rule_names,
-                key=f"map_{source_category}",
+for file_index, uploaded in enumerate(uploaded_files):
+    with st.expander(f"{file_index + 1:02d}  ·  {uploaded.name}", expanded=True):
+        try:
+            loaded = load_csv_bytes(uploaded.getvalue())
+            source = loaded.frame
+            before_summary = validate_frame(source)
+            if before_summary.missing_columns:
+                st.error("缺少必要字段：" + ", ".join(before_summary.missing_columns))
+                needs_attention += 1
+                continue
+
+            metrics = st.columns(5)
+            metrics[0].metric("数据行", f"{before_summary.rows:,}")
+            metrics[1].metric("商品", f"{before_summary.products:,}")
+            metrics[2].metric("SKU / 变体", f"{before_summary.variants:,}")
+            metrics[3].metric("附加图片行", f"{before_summary.image_only_rows:,}")
+            metrics[4].metric("字段", f"{len(source.columns):,}")
+
+            pricing_parameters = inspect.signature(apply_fixed_pricing).parameters
+            if len(pricing_parameters) >= 2:
+                pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
+            else:
+                pricing_result = apply_fixed_pricing(source)
+
+            if pricing_result.unresolved_handles:
+                unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
+                categories = sorted(value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value)
+                st.warning("存在无法自动判断的品类，请选择参考价格规则。")
+                selected_mappings = {}
+                rule_names = [rule.name for rule in CATEGORY_RULES]
+                for category in categories:
+                    selection = st.selectbox(
+                        f"{category} 参考哪个品类？",
+                        ["请选择"] + rule_names,
+                        key=f"map_{file_index}_{category}",
+                    )
+                    if selection != "请选择":
+                        selected_mappings[category] = selection
+                if categories and st.button(
+                    "保存映射并重新处理",
+                    key=f"save_map_{file_index}",
+                    disabled=len(selected_mappings) != len(categories),
+                ):
+                    st.session_state.learned_category_mappings.update(selected_mappings)
+                    st.rerun()
+
+            if "匹配方式" in pricing_result.product_summary.columns:
+                similar = pricing_result.product_summary[
+                    pricing_result.product_summary["匹配方式"].astype(str).str.startswith("相似品类")
+                ]
+            else:
+                similar = pricing_result.product_summary.copy()
+
+            similar_confirmed = True
+            result_tab, changes_tab = st.tabs(["定价结果", "SKU 变更"])
+            with result_tab:
+                if not pricing_result.product_summary.empty:
+                    visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"])
+                    st.dataframe(visible, use_container_width=True, hide_index=True, height=330)
+                if not similar.empty:
+                    st.warning("请确认相似品类映射。")
+                    st.dataframe(similar[["Handle", "匹配方式", "识别品类", "价格区间"]], use_container_width=True, hide_index=True, height=210)
+                    similar_confirmed = st.checkbox("确认此文件的相似品类关系", key=f"confirm_{file_index}")
+                    if similar_confirmed and "原始分类" in similar:
+                        st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], similar["识别品类"])))
+
+            with changes_tab:
+                preview = build_change_preview(source, pricing_result.frame)
+                preview.insert(1, "商品名称", display_titles(source).loc[preview.index])
+                changed_only = st.toggle("只看发生变化的记录", value=True, key=f"changed_{file_index}")
+                shown = preview[preview["发生变化"]] if changed_only else preview
+                st.dataframe(shown, use_container_width=True, hide_index=True, height=380)
+
+            after_summary = validate_frame(pricing_result.frame)
+            rule_issues = validate_fixed_pricing(pricing_result)
+            blocked = bool(
+                pricing_result.unresolved_handles
+                or rule_issues
+                or not similar_confirmed
+                or after_summary.invalid_prices
+                or after_summary.zero_prices
+                or after_summary.duplicate_skus
             )
-            if selected != "请选择":
-                selected_mappings[source_category] = selected
-        if st.button("保存映射并重新定价", type="primary", disabled=len(selected_mappings) != len(unresolved_categories)):
-            st.session_state.learned_category_mappings.update(selected_mappings)
-            st.rerun()
+            if blocked:
+                needs_attention += 1
+                if rule_issues:
+                    st.error("；".join(rule_issues))
+                elif not similar_confirmed:
+                    st.info("确认相似品类后即可下载此文件。")
+            else:
+                output_name = uploaded.name.rsplit(".", 1)[0] + "-正确价格.csv"
+                output_bytes = export_csv(pricing_result.frame, loaded)
+                completed_outputs.append((output_name, output_bytes))
+                st.success("此产品包已完成并通过校验。")
+                st.download_button(
+                    f"下载 {output_name}",
+                    data=output_bytes,
+                    file_name=output_name,
+                    mime="text/csv",
+                    key=f"download_{file_index}",
+                    use_container_width=True,
+                )
+        except Exception as exc:
+            needs_attention += 1
+            st.error(f"处理失败：{exc}")
 
-preview = build_change_preview(source, pricing_result.frame)
-preview.insert(1, "商品名称", display_titles(source).loc[preview.index])
+queue_cols[1].metric("已完成", len(completed_outputs))
+queue_cols[2].metric("待处理", needs_attention)
 
-if "匹配方式" in pricing_result.product_summary.columns:
-    similar_matches = pricing_result.product_summary[
-        pricing_result.product_summary["匹配方式"].astype(str).str.startswith("相似品类")
-    ]
-else:
-    similar_matches = pricing_result.product_summary.copy()
-
-similar_confirmed = True
-result_tab, changes_tab, rules_tab = st.tabs(["定价结果", "SKU 变更", "价格规则"])
-
-with result_tab:
-    if pricing_result.unresolved_handles:
-        st.error(
-            "以下商品无法匹配价格规则，已停止导出：\n\n"
-            + "\n".join(f"- {handle}" for handle in pricing_result.unresolved_handles)
-        )
-    else:
-        st.success("所有商品均已完成品类识别与价格计算。")
-
-    if not pricing_result.product_summary.empty:
-        visible_summary = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"])
-        st.dataframe(visible_summary, use_container_width=True, hide_index=True, height=420)
-
-    if not similar_matches.empty:
-        st.warning("检测到价格表外商品。请核对相似品类映射。")
-        st.dataframe(
-            similar_matches[["Handle", "匹配方式", "识别品类", "价格区间"]],
-            use_container_width=True,
-            hide_index=True,
-            height=240,
-        )
-        similar_confirmed = st.checkbox("我确认以上相似品类定价关系", value=False)
-        if similar_confirmed:
-            learned = dict(zip(similar_matches["原始分类"], similar_matches["识别品类"]))
-            st.session_state.learned_category_mappings.update(learned)
-
-with changes_tab:
-    only_changed = st.toggle("只看发生变化的 SKU", value=True)
-    shown = preview[preview["发生变化"]] if only_changed else preview
-    st.caption(f"当前显示 {len(shown):,} 条，共 {len(preview):,} 条 SKU 记录")
-    st.dataframe(shown, use_container_width=True, hide_index=True, height=540)
-
-with rules_tab:
-    st.dataframe(
-        [{"品类": rule.name, "最低售价": rule.minimum, "最高售价": rule.maximum} for rule in CATEGORY_RULES],
+st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
+if completed_outputs:
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in completed_outputs:
+            archive.writestr(name, data)
+    st.download_button(
+        f"下载全部已完成产品包（{len(completed_outputs)} 个）",
+        data=zip_buffer.getvalue(),
+        file_name="正确价格产品包.zip",
+        mime="application/zip",
         use_container_width=True,
-        hide_index=True,
-        height=520,
     )
+else:
+    st.info("完成品类确认和校验后，可在这里一次下载全部结果。")
 
-after_summary = validate_frame(pricing_result.frame)
-rule_issues = validate_fixed_pricing(pricing_result)
-blocking_errors = (
-    pricing_result.unresolved_handles
-    or rule_issues
-    or not similar_confirmed
-    or after_summary.invalid_prices
-    or after_summary.zero_prices
-    or after_summary.duplicate_skus
-)
-
-st.markdown('<div class="section-kicker">Final Check</div><div class="section-title">最终校验与导出</div>', unsafe_allow_html=True)
 if st.session_state.learned_category_mappings:
     st.download_button(
         "保存品类映射文件",
         data=json.dumps(st.session_state.learned_category_mappings, ensure_ascii=False, indent=2).encode("utf-8"),
         file_name="category-mappings.json",
         mime="application/json",
-    )
-if blocking_errors:
-    if rule_issues:
-        st.error("；".join(rule_issues))
-    elif not similar_confirmed:
-        st.warning("请先在“定价结果”中确认相似品类关系，随后即可下载。")
-    else:
-        st.warning("存在未解决问题，下载暂不可用。")
-else:
-    st.markdown(
-        """
-        <div class="download-panel">
-          <h3>文件已准备完成</h3>
-          <p>价格规则校验通过。商品结构、SKU、图片和原始 CSV 格式均已保留。</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    output_name = uploaded.name.rsplit(".", 1)[0] + "-正确价格.csv"
-    st.download_button(
-        "下载正确价格的产品包",
-        data=export_csv(pricing_result.frame, loaded),
-        file_name=output_name,
-        mime="text/csv",
-        use_container_width=True,
     )
