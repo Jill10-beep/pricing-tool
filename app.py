@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import streamlit as st
 
 from category_rules import CATEGORY_RULES
@@ -107,6 +109,21 @@ if before_summary.missing_columns:
     st.error("缺少必要字段：" + ", ".join(before_summary.missing_columns))
     st.stop()
 
+if "learned_category_mappings" not in st.session_state:
+    st.session_state.learned_category_mappings = {}
+
+with st.expander("品类映射记忆（可选）"):
+    mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
+    if mapping_file is not None:
+        try:
+            imported = json.loads(mapping_file.getvalue().decode("utf-8"))
+            valid_rule_names = {rule.name for rule in CATEGORY_RULES}
+            valid_imported = {str(key): str(value) for key, value in imported.items() if str(value) in valid_rule_names}
+            st.session_state.learned_category_mappings.update(valid_imported)
+            st.success(f"已导入 {len(valid_imported)} 条品类映射。")
+        except Exception:
+            st.error("映射文件无法读取，请使用本工具导出的 JSON 文件。")
+
 st.markdown('<div class="section-kicker">File Overview</div><div class="section-title">文件概览</div>', unsafe_allow_html=True)
 metrics = st.columns(5)
 metrics[0].metric("数据行", f"{before_summary.rows:,}")
@@ -116,10 +133,31 @@ metrics[3].metric("附加图片行", f"{before_summary.image_only_rows:,}")
 metrics[4].metric("字段", f"{len(source.columns):,}")
 
 try:
-    pricing_result = apply_fixed_pricing(source)
+    pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
 except Exception as exc:
     st.error(f"自动定价失败：{exc}")
     st.stop()
+
+if pricing_result.unresolved_handles:
+    unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
+    unresolved_categories = sorted(
+        value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value
+    )
+    if unresolved_categories:
+        st.warning("发现价格表外且无法自动判断的品类。请选择一次参考规则，系统将在当前会话中记住。")
+        selected_mappings = {}
+        rule_names = [rule.name for rule in CATEGORY_RULES]
+        for source_category in unresolved_categories:
+            selected = st.selectbox(
+                f"{source_category} 参考哪个价格品类？",
+                ["请选择"] + rule_names,
+                key=f"map_{source_category}",
+            )
+            if selected != "请选择":
+                selected_mappings[source_category] = selected
+        if st.button("保存映射并重新定价", type="primary", disabled=len(selected_mappings) != len(unresolved_categories)):
+            st.session_state.learned_category_mappings.update(selected_mappings)
+            st.rerun()
 
 preview = build_change_preview(source, pricing_result.frame)
 preview.insert(1, "商品名称", display_titles(source).loc[preview.index])
@@ -156,6 +194,9 @@ with result_tab:
             height=240,
         )
         similar_confirmed = st.checkbox("我确认以上相似品类定价关系", value=False)
+        if similar_confirmed:
+            learned = dict(zip(similar_matches["原始分类"], similar_matches["识别品类"]))
+            st.session_state.learned_category_mappings.update(learned)
 
 with changes_tab:
     only_changed = st.toggle("只看发生变化的 SKU", value=True)
@@ -183,6 +224,13 @@ blocking_errors = (
 )
 
 st.markdown('<div class="section-kicker">Final Check</div><div class="section-title">最终校验与导出</div>', unsafe_allow_html=True)
+if st.session_state.learned_category_mappings:
+    st.download_button(
+        "保存品类映射文件",
+        data=json.dumps(st.session_state.learned_category_mappings, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="category-mappings.json",
+        mime="application/json",
+    )
 if blocking_errors:
     if rule_issues:
         st.error("；".join(rule_issues))

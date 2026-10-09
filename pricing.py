@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from category_rules import CategoryRule, infer_similar_category
+from category_rules import CATEGORY_RULES, CategoryRule, infer_similar_category
 from csv_loader import variant_mask
 
 
@@ -86,14 +86,16 @@ def _product_group_keys(frame: pd.DataFrame) -> pd.Series:
     return handles.where(handles.ne(""), fallback)
 
 
-def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
+def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] | None = None) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
     if "Handle" not in output:
         raise ValueError("缺少 Handle 字段，无法按商品统一价格。")
 
+    overrides = category_overrides or {}
+    rules_by_name = {rule.name: rule for rule in CATEGORY_RULES}
     unresolved: list[str] = []
-    classified: list[tuple[str, pd.Index, CategoryRule, str]] = []
+    classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     group_keys = _product_group_keys(output)
     for group_key, group in output.groupby(group_keys, sort=False, dropna=False):
         original_handles = group["Handle"].astype(str).str.strip()
@@ -104,20 +106,26 @@ def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
         indices = group.index[variants.loc[group.index]]
         if len(indices) == 0:
             continue
-        rule, match_method = infer_similar_category(_product_text(group))
+        source_categories = group.get("category", pd.Series("", index=group.index)).astype(str).str.strip()
+        source_category = next((value for value in source_categories if value), "未提供分类")
+        override_name = overrides.get(source_category)
+        if override_name in rules_by_name:
+            rule, match_method = rules_by_name[override_name], f"已学习映射：{source_category} → {override_name}"
+        else:
+            rule, match_method = infer_similar_category(_product_text(group))
         if rule is None:
             unresolved.append(handle_text)
         else:
-            classified.append((handle_text, indices, rule, match_method or "直接匹配"))
+            classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))
 
-    by_category: dict[str, list[tuple[str, pd.Index, CategoryRule, str]]] = {}
+    by_category: dict[str, list[tuple[str, pd.Index, CategoryRule, str, str]]] = {}
     for item in classified:
         by_category.setdefault(item[2].name, []).append(item)
 
     discount_count = math.ceil(len(classified) * DISCOUNT_COVERAGE)
     discounted_handles = {
         handle
-        for handle, _, _, _ in sorted(classified, key=lambda item: _stable_number(item[0] + "-discount"))[:discount_count]
+        for handle, _, _, _, _ in sorted(classified, key=lambda item: _stable_number(item[0] + "-discount"))[:discount_count]
     }
 
     assigned_prices: dict[str, float] = {}
@@ -128,11 +136,11 @@ def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
         if len(usable_sales) < min(4, len(items)):
             raise ValueError(f"{items[0][2].name} 的价格区间不足以生成要求数量的不同售价。")
         offset = _stable_number(items[0][2].name) % len(usable_sales)
-        for position, (handle, _, _, _) in enumerate(items):
+        for position, (handle, _, _, _, _) in enumerate(items):
             assigned_prices[handle] = usable_sales[(offset + position) % len(usable_sales)]
 
     product_records: list[dict[str, object]] = []
-    for handle, indices, rule, match_method in classified:
+    for handle, indices, rule, match_method, source_category in classified:
         sale_price = assigned_prices[handle]
         rate = DISCOUNT_RATES[_stable_number(handle + "-rate") % len(DISCOUNT_RATES)] if handle in discounted_handles else 0.0
         compare_price = _compare_price(sale_price, rate, rule) if rate else 0.0
@@ -142,6 +150,7 @@ def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
         product_records.append(
             {
                 "Handle": handle,
+                "原始分类": source_category,
                 "识别品类": rule.name,
                 "匹配方式": match_method,
                 "价格区间": f"{rule.minimum:.2f}–{rule.maximum:.2f}",

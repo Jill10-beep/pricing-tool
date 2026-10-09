@@ -68,6 +68,7 @@ SIMILAR_CATEGORY_ALIASES: tuple[tuple[str, str], ...] = (
     ("jacket", "男卫衣"), ("coat", "男卫衣"), ("夹克", "男卫衣"), ("外套", "男卫衣"),
     ("face mask", "护肤"), ("face cream", "护肤"), ("面膜", "护肤"), ("面霜", "护肤"),
     ("makeup sponge", "美容工具"), ("cotton pad", "美容工具"), ("粉扑", "美容工具"), ("化妆棉", "美容工具"),
+    ("boxer briefs", "袜子"), ("boxer brief", "袜子"), ("underwear", "袜子"), ("briefs", "袜子"), ("trunks", "袜子"), ("男士内裤", "袜子"),
 )
 
 
