@@ -125,9 +125,15 @@ def to_csv_bytes(frame: pd.DataFrame, delimiter: str = ",") -> bytes:
 
 
 def variant_mask(frame: pd.DataFrame) -> pd.Series:
-    if "sku_code" not in frame.columns:
-        return pd.Series(False, index=frame.index)
-    return frame["sku_code"].astype(str).str.strip().ne("")
+    if "sku_code" in frame.columns:
+        sku_mask = frame["sku_code"].astype(str).str.strip().ne("")
+        if sku_mask.any():
+            return sku_mask
+    # Some supplier CSVs omit SKU for every variant. In that structure,
+    # a populated price identifies a variant row while image-only rows stay blank.
+    if "price" in frame.columns:
+        return frame["price"].astype(str).str.strip().ne("")
+    return pd.Series(False, index=frame.index)
 
 
 def product_mask(frame: pd.DataFrame) -> pd.Series:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -14,9 +15,9 @@ class CategoryRule:
 CATEGORY_RULES: tuple[CategoryRule, ...] = (
     CategoryRule("女T恤", 19.99, 24.99, ("women's t-shirt", "womens t-shirt", "women t-shirt", "女t恤")),
     CategoryRule("男T恤", 22.99, 29.99, ("men's t-shirt", "mens t-shirt", "men t-shirt", "男t恤")),
-    CategoryRule("女衬衫", 24.99, 32.99, ("women's shirt", "womens shirt", "women blouse", "women's blouse", "女衬衫")),
+    CategoryRule("女衬衫", 24.99, 32.99, ("women's shirt", "women's shirts", "womens shirt", "womens shirts", "women blouse", "women's blouse", "女衬衫")),
     CategoryRule("男Polo衫", 29.99, 39.99, ("men's polo", "mens polo", "男polo")),
-    CategoryRule("男衬衫", 29.99, 39.99, ("men's shirt", "mens shirt", "男衬衫")),
+    CategoryRule("男衬衫", 29.99, 39.99, ("men's shirt", "men's shirts", "mens shirt", "mens shirts", "男衬衫")),
     CategoryRule("女连衣裙", 34.99, 44.99, ("women's dress", "womens dress", "women dress", "女连衣裙")),
     CategoryRule("女半身裙", 24.99, 34.99, ("women's skirt", "womens skirt", "women skirt", "女半身裙")),
     CategoryRule("女卫衣", 34.99, 44.99, ("women's sweatshirt", "womens sweatshirt", "women hoodie", "women's hoodie", "女卫衣")),
@@ -29,7 +30,7 @@ CATEGORY_RULES: tuple[CategoryRule, ...] = (
     CategoryRule("男长裤", 34.99, 44.99, ("men's pants", "mens pants", "men trousers", "men's trousers", "男长裤")),
     CategoryRule("女短裤", 22.99, 29.99, ("women's shorts", "womens shorts", "women shorts", "女短裤")),
     CategoryRule("男短裤", 24.99, 34.99, ("men's shorts", "mens shorts", "men shorts", "男短裤")),
-    CategoryRule("女套装", 39.99, 49.99, ("women's set", "womens set", "women two piece", "women's two piece", "女套装")),
+    CategoryRule("女套装", 39.99, 49.99, ("women's set", "womens set", "women's, sets", "womens, sets", "women two piece", "women's two piece", "women's tracksuit", "womens tracksuit", "jogger set", "activewear set", "straight-leg pant set", "trousers set", "女套装", "女运动套装")),
     CategoryRule("运动鞋/跑鞋", 49.99, 69.99, ("running shoe", "running sneaker", "athletic shoe", "sports shoe", "运动鞋", "跑鞋")),
     CategoryRule("休闲鞋/乐福鞋", 39.99, 49.99, ("loafer", "casual shoe", "休闲鞋", "乐福鞋")),
     CategoryRule("凉鞋/平底鞋", 29.99, 39.99, ("sandal", "flat shoe", "ballet flat", "凉鞋", "平底鞋")),
@@ -45,10 +46,16 @@ CATEGORY_RULES: tuple[CategoryRule, ...] = (
 )
 
 
+def _contains_keyword(text: str, keyword: str) -> bool:
+    if re.search(r"[\u4e00-\u9fff]", keyword):
+        return keyword in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text) is not None
+
+
 def classify_product(text: str) -> CategoryRule | None:
     normalized = " ".join(str(text).lower().replace("_", "-").split())
     for rule in CATEGORY_RULES:
-        if any(keyword in normalized for keyword in rule.keywords):
+        if any(_contains_keyword(normalized, keyword) for keyword in rule.keywords):
             return rule
     return None
 
@@ -71,6 +78,6 @@ def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
     normalized = " ".join(str(text).lower().replace("_", "-").split())
     rules_by_name = {rule.name: rule for rule in CATEGORY_RULES}
     for keyword, target in SIMILAR_CATEGORY_ALIASES:
-        if keyword in normalized:
+        if _contains_keyword(normalized, keyword):
             return rules_by_name[target], f"相似品类：{keyword} → {target}"
     return None, None
