@@ -73,6 +73,19 @@ def _product_text(group: pd.DataFrame) -> str:
     )
 
 
+def _product_group_keys(frame: pd.DataFrame) -> pd.Series:
+    """Use Handle when present; otherwise group continuation rows under each Title row."""
+    handles = frame["Handle"].astype(str).str.strip()
+    titles = frame.get("Title", pd.Series("", index=frame.index)).astype(str).str.strip()
+    title_anchor = pd.Series(
+        [str(index) if title else pd.NA for index, title in zip(frame.index, titles)],
+        index=frame.index,
+        dtype="string",
+    ).ffill()
+    fallback = "title-row:" + title_anchor.fillna(pd.Series(frame.index.astype(str), index=frame.index))
+    return handles.where(handles.ne(""), fallback)
+
+
 def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
@@ -81,10 +94,15 @@ def apply_fixed_pricing(frame: pd.DataFrame) -> PricingResult:
 
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str]] = []
-    for handle, group in output.groupby("Handle", sort=False, dropna=False):
-        handle_text = str(handle).strip()
+    group_keys = _product_group_keys(output)
+    for group_key, group in output.groupby(group_keys, sort=False, dropna=False):
+        original_handles = group["Handle"].astype(str).str.strip()
+        handle_text = next((value for value in original_handles if value), "")
+        if not handle_text:
+            titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
+            handle_text = next((value for value in titles if value), str(group_key))
         indices = group.index[variants.loc[group.index]]
-        if not handle_text or len(indices) == 0:
+        if len(indices) == 0:
             continue
         rule, match_method = infer_similar_category(_product_text(group))
         if rule is None:

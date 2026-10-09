@@ -59,9 +59,12 @@ if not pricing_result.product_summary.empty:
     visible_summary = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"])
     st.dataframe(visible_summary, use_container_width=True, hide_index=True)
 
-similar_matches = pricing_result.product_summary[
-    pricing_result.product_summary["匹配方式"].astype(str).str.startswith("相似品类")
-]
+if "匹配方式" in pricing_result.product_summary.columns:
+    similar_matches = pricing_result.product_summary[
+        pricing_result.product_summary["匹配方式"].astype(str).str.startswith("相似品类")
+    ]
+else:
+    similar_matches = pricing_result.product_summary.copy()
 similar_confirmed = True
 if not similar_matches.empty:
     st.warning("检测到价格表以外的商品。请确认下面的相似品类映射后再导出。")
