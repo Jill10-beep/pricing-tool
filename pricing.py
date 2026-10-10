@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from category_rules import CATEGORY_RULES, CategoryRule, infer_similar_category
+from category_rules import CategoryRule, infer_similar_category, resolve_rule
 from csv_loader import variant_mask
 
 
@@ -93,7 +93,6 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         raise ValueError("缺少 Handle 字段，无法按商品统一价格。")
 
     overrides = category_overrides or {}
-    rules_by_name = {rule.name: rule for rule in CATEGORY_RULES}
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     group_keys = _product_group_keys(output)
@@ -109,8 +108,9 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         source_categories = group.get("category", pd.Series("", index=group.index)).astype(str).str.strip()
         source_category = next((value for value in source_categories if value), "未提供分类")
         override_name = overrides.get(source_category)
-        if override_name in rules_by_name:
-            rule, match_method = rules_by_name[override_name], f"已学习映射：{source_category} → {override_name}"
+        override_rule = resolve_rule(override_name) if override_name else None
+        if override_rule:
+            rule, match_method = override_rule, f"已确认映射：{source_category} → {override_rule.primary} → {override_rule.name}"
         else:
             rule, match_method = infer_similar_category(_product_text(group))
         if rule is None:
@@ -120,7 +120,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
 
     by_category: dict[str, list[tuple[str, pd.Index, CategoryRule, str, str]]] = {}
     for item in classified:
-        by_category.setdefault(item[2].name, []).append(item)
+        by_category.setdefault(item[2].rule_id, []).append(item)
 
     discount_count = math.ceil(len(classified) * DISCOUNT_COVERAGE)
     discounted_handles = {
@@ -151,6 +151,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
             {
                 "Handle": handle,
                 "原始分类": source_category,
+                "一级品类": rule.primary,
                 "识别品类": rule.name,
                 "匹配方式": match_method,
                 "价格区间": f"{rule.minimum:.2f}–{rule.maximum:.2f}",

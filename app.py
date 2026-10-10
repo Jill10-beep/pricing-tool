@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import inspect
 from io import BytesIO
 import zipfile
 
 import streamlit as st
 
-from category_rules import CATEGORY_RULES
+from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
 from exporter import export_csv
 from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pricing
@@ -92,14 +91,14 @@ if not uploaded_files:
         <div class="empty-grid">
           <div class="empty-card"><strong>只修改价格字段</strong><span>保留原始列结构、顺序、引号、编码、图片和商品信息。</span></div>
           <div class="empty-card"><strong>固定规则自动校验</strong><span>售价、原价、折扣比例、价格多样性和变体一致性逐项检查。</span></div>
-          <div class="empty-card"><strong>相似品类识别</strong><span>价格表外商品将匹配相近的定价基准，并在下载前等待确认。</span></div>
+          <div class="empty-card"><strong>两级品类识别</strong><span>先识别一级品类，再在该一级品类内匹配具体价格；表外商品等待你选择。</span></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     with st.expander("查看已内置的固定价格区间"):
         st.dataframe(
-            [{"品类": rule.name, "最低售价": rule.minimum, "最高售价": rule.maximum} for rule in CATEGORY_RULES],
+            [{"一级品类": rule.primary, "具体品类": rule.name, "最低售价": rule.minimum, "最高售价": rule.maximum} for rule in CATEGORY_RULES],
             use_container_width=True,
             hide_index=True,
         )
@@ -113,8 +112,7 @@ with st.expander("品类映射记忆（可选）"):
     if mapping_file is not None:
         try:
             imported = json.loads(mapping_file.getvalue().decode("utf-8"))
-            valid_names = {rule.name for rule in CATEGORY_RULES}
-            valid = {str(key): str(value) for key, value in imported.items() if str(value) in valid_names}
+            valid = {str(key): str(value) for key, value in imported.items() if resolve_rule(str(value)) is not None}
             st.session_state.learned_category_mappings.update(valid)
             st.success(f"已导入 {len(valid)} 条品类映射。")
         except Exception:
@@ -145,26 +143,33 @@ for file_index, uploaded in enumerate(uploaded_files):
             metrics[3].metric("附加图片行", f"{before_summary.image_only_rows:,}")
             metrics[4].metric("字段", f"{len(source.columns):,}")
 
-            pricing_parameters = inspect.signature(apply_fixed_pricing).parameters
-            if len(pricing_parameters) >= 2:
-                pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
-            else:
-                pricing_result = apply_fixed_pricing(source)
+            pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
 
             if pricing_result.unresolved_handles:
                 unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
                 categories = sorted(value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value)
-                st.warning("存在无法自动判断的品类，请选择参考价格规则。")
+                st.warning("价格表中没有找到明确对应项。请选择一级品类，再选择要参考的具体品类；确认前不会修改和导出。")
                 selected_mappings = {}
-                rule_names = [rule.name for rule in CATEGORY_RULES]
                 for category in categories:
-                    selection = st.selectbox(
-                        f"{category} 参考哪个品类？",
-                        ["请选择"] + rule_names,
-                        key=f"map_{file_index}_{category}",
+                    suggested_primary = infer_primary_category(category)
+                    primary_options = ["请选择"] + list(PRIMARY_CATEGORIES)
+                    primary_index = primary_options.index(suggested_primary) if suggested_primary in primary_options else 0
+                    primary = st.selectbox(
+                        f"{category}：先选择一级品类",
+                        primary_options,
+                        index=primary_index,
+                        key=f"primary_{file_index}_{category}",
                     )
-                    if selection != "请选择":
-                        selected_mappings[category] = selection
+                    if primary != "请选择":
+                        candidate_rules = rules_for_primary(primary)
+                        labels = [f"{rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）" for rule in candidate_rules]
+                        selection = st.selectbox(
+                            f"{category}：参考哪个具体品类？",
+                            ["请选择"] + labels,
+                            key=f"rule_{file_index}_{category}",
+                        )
+                        if selection != "请选择":
+                            selected_mappings[category] = candidate_rules[labels.index(selection)].rule_id
                 if categories and st.button(
                     "保存映射并重新处理",
                     key=f"save_map_{file_index}",
@@ -188,10 +193,11 @@ for file_index, uploaded in enumerate(uploaded_files):
                     st.dataframe(visible, use_container_width=True, hide_index=True, height=330)
                 if not similar.empty:
                     st.warning("请确认相似品类映射。")
-                    st.dataframe(similar[["Handle", "匹配方式", "识别品类", "价格区间"]], use_container_width=True, hide_index=True, height=210)
+                    st.dataframe(similar[["Handle", "匹配方式", "一级品类", "识别品类", "价格区间"]], use_container_width=True, hide_index=True, height=210)
                     similar_confirmed = st.checkbox("确认此文件的相似品类关系", key=f"confirm_{file_index}")
                     if similar_confirmed and "原始分类" in similar:
-                        st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], similar["识别品类"])))
+                        mapped_ids = [f"{primary}::{name}" for primary, name in zip(similar["一级品类"], similar["识别品类"])]
+                        st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], mapped_ids)))
 
             with changes_tab:
                 preview = build_change_preview(source, pricing_result.frame)
