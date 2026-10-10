@@ -6,7 +6,7 @@ import zipfile
 
 import streamlit as st
 
-from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, resolve_rule, rules_for_primary
+from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
 from exporter import export_csv
 from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pricing
@@ -151,7 +151,22 @@ for file_index, uploaded in enumerate(uploaded_files):
                 st.warning("价格表中没有找到明确对应项。请选择一级品类，再选择要参考的具体品类；确认前不会修改和导出。")
                 selected_mappings = {}
                 for category in categories:
-                    suggested_primary = infer_primary_category(category)
+                    category_rows = unresolved_rows[unresolved_rows["category"].astype(str).str.strip() == category]
+                    sample_titles = " ".join(category_rows["Title"].astype(str).drop_duplicates().head(12)) if "Title" in category_rows else ""
+                    candidates = rank_similar_categories(f"{category} {sample_titles}", 3)
+                    if candidates:
+                        st.caption("智能候选（只供参考，确认后才定价）")
+                        st.dataframe(
+                            [{
+                                "一级品类": rule.primary,
+                                "具体品类": rule.name,
+                                "价格区间": f"${rule.minimum:.2f}–${rule.maximum:.2f}",
+                                "相似度": f"{score * 100:.1f}%",
+                            } for rule, score in candidates],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    suggested_primary = candidates[0][0].primary if candidates else infer_primary_category(category)
                     primary_options = ["请选择"] + list(PRIMARY_CATEGORIES)
                     primary_index = primary_options.index(suggested_primary) if suggested_primary in primary_options else 0
                     primary = st.selectbox(
@@ -180,7 +195,7 @@ for file_index, uploaded in enumerate(uploaded_files):
 
             if "匹配方式" in pricing_result.product_summary.columns:
                 similar = pricing_result.product_summary[
-                    pricing_result.product_summary["匹配方式"].astype(str).str.startswith("相似品类")
+                    pricing_result.product_summary["匹配方式"].astype(str).str.contains("语义匹配", regex=False)
                 ]
             else:
                 similar = pricing_result.product_summary.copy()

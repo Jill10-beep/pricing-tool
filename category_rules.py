@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from collections import Counter
+import math
 import re
 
 
@@ -193,6 +196,7 @@ Automotive, Outdoor and Office|Stationery Supplies|7.99|24.99
 ALIASES: dict[str, tuple[str, ...]] = {
     "Women's Clothing::Sets": ("women's, sets", "women's set", "womens set", "women tracksuit", "jogger set", "two piece set", "女套装", "女运动套装"),
     "Men's Clothing::Underwear": ("boxer brief", "boxer briefs", "men underwear", "men's underwear", "briefs", "trunks", "男士内裤"),
+    "Underwear, Sleepwear and Swimwear::Panties (Multipacks)": ("panties", "panty", "women's panties", "womens panties", "女士内裤"),
     "Jewelry and Accessories::Ties": ("necktie", "neckties", "neck tie", "knit tie", "bow tie", "tie", "ties", "领带", "领结"),
     "Home Decor and Bedding::Furniture": ("furniture", "chair", "sofa", "cabinet", "shelf", "家具", "椅子", "沙发"),
     "Men's Clothing::Shirts": ("men shirt", "men's shirt", "mens shirt", "男衬衫"),
@@ -243,6 +247,27 @@ PRIMARY_KEYWORDS = {
     "Automotive, Outdoor and Office": ("automotive", "car ", "office", "汽车", "办公"),
 }
 
+# Extra natural-language examples improve matching for supplier categories that
+# do not use exactly the same wording as the price table. They never set prices;
+# they only help rank the existing, approved categories.
+SEMANTIC_EXAMPLES: dict[str, str] = {
+    "Kitchen and Storage::Kitchen Tools": "coffee grinder kitchen gadget utensil peeler slicer opener kitchen appliance",
+    "Kitchen and Storage::Cookware": "pot pan skillet saucepan cooking vessel cookware",
+    "Pet and Electronics::Smart Devices": "smart electronic connected device sensor camera automation",
+    "Jewelry and Accessories::Ties": "necktie neck tie bow tie formal mens accessory",
+    "Underwear, Sleepwear and Swimwear::Panties (Multipacks)": "women panties briefs knickers underwear multipack",
+    "Men's Clothing::Underwear": "men boxer briefs trunks underwear multipack",
+    "Women's Clothing::Sets": "women two piece matching set tracksuit top pants outfit",
+    "Women's Clothing::Tops": "women camisole tank top tunic crop top sleeveless top",
+    "Footwear::Sneakers": "trainers athletic sneakers everyday sports shoes",
+    "Footwear::Running Shoes": "jogging marathon running trainers athletic footwear",
+    "Bags::Crossbody Bags": "cross body sling messenger small shoulder purse",
+    "Home Decor and Bedding::Furniture": "chair table sofa cabinet shelf desk furniture",
+    "Beauty::Beauty Tools": "makeup brush sponge applicator eyelash curler beauty accessory",
+    "Tools and Home Improvement::Home Repair Tool Kit": "repair maintenance household diy tool kit",
+    "Automotive, Outdoor and Office::Office Supplies": "workplace business office equipment supplies",
+}
+
 
 def _normalize(text: str) -> str:
     return " ".join(str(text).lower().replace("_", " ").replace("-", " ").split())
@@ -261,6 +286,14 @@ def rules_for_primary(primary: str) -> tuple[CategoryRule, ...]:
 
 def infer_primary_category(text: str) -> str | None:
     normalized = _normalize(text)
+    # Gender tokens must be mutually exclusive. Never let "men" hidden inside
+    # "women/womens/women's" affect the result (or the reverse).
+    is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
+    is_men = re.search(r"(?<![a-z0-9])(?:men|mens|men's|male)(?![a-z0-9])", normalized) is not None
+    if is_women and not is_men:
+        return "Women's Clothing"
+    if is_men and not is_women:
+        return "Men's Clothing"
     scores = {primary: sum(_contains(normalized, k) for k in words) for primary, words in PRIMARY_KEYWORDS.items()}
     best = max(scores, key=scores.get)
     return best if scores[best] else None
@@ -299,9 +332,78 @@ def classify_product(text: str) -> CategoryRule | None:
     return _apply_plus_size(max(matches, key=lambda item: item[0])[1], normalized) if matches else None
 
 
+def _rule_document(rule: CategoryRule) -> str:
+    aliases = " ".join(rule.keywords)
+    examples = SEMANTIC_EXAMPLES.get(rule.rule_id, "")
+    return f"{rule.primary} {rule.name} {aliases} {examples}"
+
+
+@lru_cache(maxsize=1)
+def _semantic_index():
+    documents = [_rule_document(rule) for rule in CATEGORY_RULES]
+    raw = [_features(document) for document in documents]
+    document_frequency = Counter(feature for features in raw for feature in features)
+    count = len(documents)
+    idf = {feature: math.log((count + 1) / (frequency + 1)) + 1 for feature, frequency in document_frequency.items()}
+    return idf, tuple(_weighted_vector(features, idf) for features in raw)
+
+
+def _features(text: str) -> Counter[str]:
+    normalized = f" {_normalize(text)} "
+    features: Counter[str] = Counter()
+    words = re.findall(r"[a-z0-9']+|[\u4e00-\u9fff]+", normalized)
+    features.update(f"w:{word}" for word in words)
+    features.update(f"b:{words[i]} {words[i + 1]}" for i in range(len(words) - 1))
+    compact = re.sub(r"\s+", " ", normalized)
+    for size in (3, 4, 5):
+        features.update(f"c:{compact[i:i + size]}" for i in range(max(0, len(compact) - size + 1)))
+    return features
+
+
+def _weighted_vector(features: Counter[str], idf: dict[str, float]) -> dict[str, float]:
+    vector = {feature: (1 + math.log(count)) * idf.get(feature, 1.0) for feature, count in features.items()}
+    norm = math.sqrt(sum(value * value for value in vector.values())) or 1.0
+    return {feature: value / norm for feature, value in vector.items()}
+
+
+def rank_similar_categories(text: str, top_n: int = 3) -> tuple[tuple[CategoryRule, float], ...]:
+    """Return approved price-table categories ordered by local similarity."""
+    if not str(text).strip():
+        return ()
+    idf, matrix = _semantic_index()
+    normalized = _normalize(text)
+    query = _weighted_vector(_features(normalized), idf)
+    scores = [sum(value * document.get(feature, 0.0) for feature, value in query.items()) for document in matrix]
+
+    # Gender is a hard constraint, never a soft similarity preference.
+    is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
+    is_men = re.search(r"(?<![a-z0-9])(?:men|mens|men's|male)(?![a-z0-9])", normalized) is not None
+    ranked = []
+    for rule, score in zip(CATEGORY_RULES, scores):
+        if is_women and not is_men and rule.primary == "Men's Clothing":
+            continue
+        if is_men and not is_women and rule.primary == "Women's Clothing":
+            continue
+        ranked.append((rule, round(float(score), 4)))
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return tuple(ranked[:top_n])
+
+
 def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
     rule = classify_product(text)
-    return (rule, f"层级匹配：{rule.primary} → {rule.name}") if rule else (None, None)
+    if rule:
+        return rule, f"层级匹配：{rule.primary} → {rule.name}"
+    ranked = rank_similar_categories(text, 2)
+    if not ranked:
+        return None, None
+    best_rule, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+    # Conservative auto mode: both a high absolute score and a clear lead are
+    # required. Everything else goes to the user's candidate-selection screen.
+    if best_score >= 0.28 and best_score - second_score >= 0.15:
+        confidence = round(best_score * 100)
+        return best_rule, f"高置信语义匹配 {confidence}%：{best_rule.primary} → {best_rule.name}"
+    return None, None
 
 
 def resolve_rule(value: str) -> CategoryRule | None:
