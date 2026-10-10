@@ -16,7 +16,7 @@ class LoadedCsv:
     row_endings: tuple[str, ...]
 
 
-SUPPORTED_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "gbk", "utf-16")
+SUPPORTED_ENCODINGS = ("utf-8", "gb18030", "gbk", "utf-16")
 
 
 def _split_raw_csv(text: str, delimiter: str) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
@@ -57,7 +57,11 @@ def _split_raw_csv(text: str, delimiter: str) -> tuple[tuple[tuple[str, ...], ..
 def load_csv_bytes(data: bytes) -> LoadedCsv:
     text = None
     encoding = None
-    for candidate in SUPPORTED_ENCODINGS:
+    # utf-8-sig can decode ordinary UTF-8 too, but encoding it again adds a BOM
+    # that was not present in the supplier file. Some store importers reject it.
+    # Only select utf-8-sig when the original bytes actually contain its BOM.
+    candidates = (("utf-8-sig",) + SUPPORTED_ENCODINGS) if data.startswith(b"\xef\xbb\xbf") else SUPPORTED_ENCODINGS
+    for candidate in candidates:
         try:
             text = data.decode(candidate)
             encoding = candidate
