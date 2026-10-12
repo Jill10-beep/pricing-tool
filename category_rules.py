@@ -413,3 +413,21 @@ def resolve_rule(value: str) -> CategoryRule | None:
         return by_id[value]
     matches = [rule for rule in CATEGORY_RULES if rule.name == value]
     return matches[0] if len(matches) == 1 else None
+
+
+def has_category_conflict(text: str, rule: CategoryRule) -> bool:
+    """Reject impossible cross-department matches before any price is written."""
+    normalized = _normalize(text)
+    is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
+    is_men = re.search(r"(?<![a-z0-9])(?:men|mens|men's|male)(?![a-z0-9])", normalized) is not None
+    if is_women and not is_men and rule.primary == "Men's Clothing":
+        return True
+    if is_men and not is_women and rule.primary == "Women's Clothing":
+        return True
+    if any(_contains(normalized, word) for word in ("dress", "dresses", "连衣裙")) and rule.primary == "Footwear":
+        return True
+    if any(_contains(normalized, word) for word in ("boot", "boots", "shoe", "shoes", "靴子", "鞋")) and rule.primary in {"Women's Clothing", "Men's Clothing"}:
+        return True
+    if any(_contains(normalized, word) for word in ("panty", "panties", "boxer briefs", "underwear")) and rule.primary == "Footwear":
+        return True
+    return False

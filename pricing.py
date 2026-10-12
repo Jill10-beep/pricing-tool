@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from category_rules import CategoryRule, infer_similar_category, resolve_rule
+from category_rules import CategoryRule, classify_product, has_category_conflict, infer_similar_category, resolve_rule
 from csv_loader import variant_mask
 
 
@@ -64,7 +64,9 @@ def _compare_price(sale_price: float, discount_rate: float, rule: CategoryRule) 
 
 
 def _product_text(group: pd.DataFrame) -> str:
-    fields = [field for field in ("Title", "category", "tags", "body_html") if field in group]
+    # Descriptions often contain styling suggestions such as "pair with boots".
+    # They must never decide the product's category.
+    fields = [field for field in ("category", "Title", "tags") if field in group]
     return " ".join(
         value
         for field in fields
@@ -107,13 +109,23 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
             continue
         source_categories = group.get("category", pd.Series("", index=group.index)).astype(str).str.strip()
         source_category = next((value for value in source_categories if value), "未提供分类")
+        titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
+        title = next((value for value in titles if value), "")
+        structured_text = f"{source_category} {title}"
         override_name = overrides.get(source_category)
         override_rule = resolve_rule(override_name) if override_name else None
         if override_rule:
             rule, match_method = override_rule, f"已确认映射：{source_category} → {override_rule.primary} → {override_rule.name}"
         else:
-            rule, match_method = infer_similar_category(_product_text(group))
-        if rule is None:
+            # Evidence priority: supplier category > product title > tags.
+            rule = classify_product(source_category)
+            match_method = f"原始分类匹配：{rule.primary} → {rule.name}" if rule else None
+            if rule is None:
+                rule = classify_product(title)
+                match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
+            if rule is None:
+                rule, match_method = infer_similar_category(_product_text(group))
+        if rule is None or has_category_conflict(structured_text, rule):
             unresolved.append(handle_text)
         else:
             classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))
