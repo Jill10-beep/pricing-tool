@@ -207,6 +207,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Beauty::Makeup": ("lipstick", "mascara", "eyeshadow", "foundation", "彩妆"),
     "Footwear::Running Shoes": ("running shoe", "跑鞋"),
     "Footwear::Casual Shoes": ("casual shoe", "休闲鞋"),
+    "Footwear::Boots": ("work boot", "work boots", "western boot", "western boots", "cowboy boot", "cowboy boots", "leather boot", "leather boots", "boot", "boots", "靴子", "工作靴", "西部靴"),
 }
 
 

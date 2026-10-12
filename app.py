@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from io import BytesIO
+import time
+import uuid
 import zipfile
 
 import streamlit as st
@@ -14,6 +16,20 @@ from validator import validate_frame
 
 
 st.set_page_config(page_title="产品自动定价工具", page_icon="◆", layout="wide")
+
+
+@st.cache_resource
+def _batch_store() -> dict[str, dict[str, object]]:
+    """Keep uploaded bytes across reruns and ordinary browser refreshes."""
+    return {}
+
+
+def _upload_name(uploaded: object) -> str:
+    return uploaded["name"] if isinstance(uploaded, dict) else uploaded.name
+
+
+def _upload_bytes(uploaded: object) -> bytes:
+    return uploaded["data"] if isinstance(uploaded, dict) else uploaded.getvalue()
 
 st.markdown(
     """
@@ -78,12 +94,39 @@ st.markdown(
 )
 
 st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">上传产品包</div>', unsafe_allow_html=True)
-uploaded_files = st.file_uploader(
+new_uploads = st.file_uploader(
     "上传产品 CSV",
     type=["csv"],
     accept_multiple_files=True,
     label_visibility="collapsed",
+    key="product_csv_uploader",
 )
+
+store = _batch_store()
+batch_id = st.query_params.get("batch")
+if new_uploads:
+    if not batch_id or batch_id not in store:
+        batch_id = uuid.uuid4().hex
+        st.query_params["batch"] = batch_id
+    previous_mappings = store.get(batch_id, {}).get("mappings", {})
+    store[batch_id] = {
+        "files": [{"name": item.name, "data": item.getvalue()} for item in new_uploads],
+        "mappings": dict(previous_mappings),
+        "updated": time.time(),
+    }
+    # Limit shared cloud memory while retaining recent refreshable batches.
+    if len(store) > 20:
+        oldest = min(store, key=lambda key: float(store[key].get("updated", 0)))
+        if oldest != batch_id:
+            store.pop(oldest, None)
+
+uploaded_files = list(store.get(batch_id, {}).get("files", [])) if batch_id in store else []
+
+if "learned_category_mappings" not in st.session_state:
+    st.session_state.learned_category_mappings = dict(store.get(batch_id, {}).get("mappings", {})) if batch_id in store else {}
+
+if uploaded_files:
+    st.success(f"当前批次已保留 {len(uploaded_files)} 个产品包。普通页面刷新不会丢失；应用重启或重新部署后需重新上传。")
 
 if not uploaded_files:
     st.markdown(
@@ -104,9 +147,6 @@ if not uploaded_files:
         )
     st.stop()
 
-if "learned_category_mappings" not in st.session_state:
-    st.session_state.learned_category_mappings = {}
-
 with st.expander("品类映射记忆（可选）"):
     mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
     if mapping_file is not None:
@@ -114,6 +154,8 @@ with st.expander("品类映射记忆（可选）"):
             imported = json.loads(mapping_file.getvalue().decode("utf-8"))
             valid = {str(key): str(value) for key, value in imported.items() if resolve_rule(str(value)) is not None}
             st.session_state.learned_category_mappings.update(valid)
+            if batch_id in store:
+                store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
             st.success(f"已导入 {len(valid)} 条品类映射。")
         except Exception:
             st.error("映射文件无法读取。")
@@ -126,9 +168,11 @@ completed_outputs: list[tuple[str, bytes]] = []
 needs_attention = 0
 
 for file_index, uploaded in enumerate(uploaded_files):
-    with st.expander(f"{file_index + 1:02d}  ·  {uploaded.name}", expanded=True):
+    uploaded_name = _upload_name(uploaded)
+    uploaded_data = _upload_bytes(uploaded)
+    with st.expander(f"{file_index + 1:02d}  ·  {uploaded_name}", expanded=True):
         try:
-            loaded = load_csv_bytes(uploaded.getvalue())
+            loaded = load_csv_bytes(uploaded_data)
             source = loaded.frame
             before_summary = validate_frame(source)
             if before_summary.missing_columns:
@@ -191,6 +235,9 @@ for file_index, uploaded in enumerate(uploaded_files):
                     disabled=len(selected_mappings) != len(categories),
                 ):
                     st.session_state.learned_category_mappings.update(selected_mappings)
+                    if batch_id in store:
+                        store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
+                        store[batch_id]["updated"] = time.time()
                     st.rerun()
 
             if "匹配方式" in pricing_result.product_summary.columns:
@@ -213,6 +260,8 @@ for file_index, uploaded in enumerate(uploaded_files):
                     if similar_confirmed and "原始分类" in similar:
                         mapped_ids = [f"{primary}::{name}" for primary, name in zip(similar["一级品类"], similar["识别品类"])]
                         st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], mapped_ids)))
+                        if batch_id in store:
+                            store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
 
             with changes_tab:
                 preview = build_change_preview(source, pricing_result.frame)
@@ -238,7 +287,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 elif not similar_confirmed:
                     st.info("确认相似品类后即可下载此文件。")
             else:
-                output_name = uploaded.name.rsplit(".", 1)[0] + "-正确价格.csv"
+                output_name = uploaded_name.rsplit(".", 1)[0] + "-正确价格.csv"
                 output_bytes = export_csv(pricing_result.frame, loaded)
                 completed_outputs.append((output_name, output_bytes))
                 st.success("此产品包已完成并通过校验。")
@@ -259,12 +308,13 @@ queue_cols[2].metric("待处理", needs_attention)
 
 st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
 if completed_outputs:
+    st.warning("批量下载得到的是 ZIP 压缩包，仅用于一次保存多个文件。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, data in completed_outputs:
             archive.writestr(name, data)
     st.download_button(
-        f"下载全部已完成产品包（{len(completed_outputs)} 个）",
+        f"下载全部已完成产品包（ZIP，上传后台前需解压）· {len(completed_outputs)} 个",
         data=zip_buffer.getvalue(),
         file_name="正确价格产品包.zip",
         mime="application/zip",
