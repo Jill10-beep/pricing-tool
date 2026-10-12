@@ -272,18 +272,26 @@ for file_index, uploaded in enumerate(uploaded_files):
 
             after_summary = validate_frame(pricing_result.frame)
             rule_issues = validate_fixed_pricing(pricing_result)
+            if before_summary.duplicate_skus:
+                st.warning(
+                    f"原始产品包中有 {before_summary.duplicate_skus} 行使用重复 SKU。"
+                    "程序不会修改 SKU；该问题只作提醒，不再阻止价格文件下载。"
+                )
             blocked = bool(
                 pricing_result.unresolved_handles
                 or rule_issues
                 or not similar_confirmed
                 or after_summary.invalid_prices
                 or after_summary.zero_prices
-                or after_summary.duplicate_skus
             )
             if blocked:
                 needs_attention += 1
                 if rule_issues:
                     st.error("；".join(rule_issues))
+                elif after_summary.invalid_prices:
+                    st.error(f"仍有 {after_summary.invalid_prices} 个 SKU 的售价不是有效数字，暂不能导出。")
+                elif after_summary.zero_prices:
+                    st.error(f"仍有 {after_summary.zero_prices} 个 SKU 的售价为 0，暂不能导出。")
                 elif not similar_confirmed:
                     st.info("确认相似品类后即可下载此文件。")
             else:
