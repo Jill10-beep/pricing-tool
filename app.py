@@ -189,6 +189,52 @@ for file_index, uploaded in enumerate(uploaded_files):
 
             pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
 
+            # Manual correction is always available, even when automatic
+            # classification succeeded. Mappings are stored by supplier category.
+            if not pricing_result.product_summary.empty:
+                recognized = (
+                    pricing_result.product_summary[["原始分类", "一级品类", "识别品类"]]
+                    .drop_duplicates(subset=["原始分类"])
+                )
+                all_rule_labels = [
+                    f"{rule.primary} → {rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）"
+                    for rule in CATEGORY_RULES
+                ]
+                manual_corrections: dict[str, str | None] = {}
+                with st.expander("自动识别不正确？手动选择正确品类", expanded=False):
+                    st.caption("选择后会重新计算整个原始分类的价格，并记住这次选择。没有错误时保持当前识别即可。")
+                    for _, recognized_row in recognized.iterrows():
+                        source_category = str(recognized_row["原始分类"])
+                        current_label = f"{recognized_row['一级品类']} → {recognized_row['识别品类']}"
+                        choices = ["保持当前识别"]
+                        if source_category in st.session_state.learned_category_mappings:
+                            choices.append("恢复程序自动识别")
+                        choices.extend(all_rule_labels)
+                        selection = st.selectbox(
+                            f"原始分类：{source_category}｜当前：{current_label}",
+                            choices,
+                            key=f"manual_rule_{file_index}_{source_category}",
+                        )
+                        if selection == "恢复程序自动识别":
+                            manual_corrections[source_category] = None
+                        elif selection not in {"保持当前识别", "恢复程序自动识别"}:
+                            manual_corrections[source_category] = CATEGORY_RULES[all_rule_labels.index(selection)].rule_id
+                    if st.button(
+                        "保存人工纠正并重新定价",
+                        key=f"save_manual_{file_index}",
+                        disabled=not manual_corrections,
+                        use_container_width=True,
+                    ):
+                        for source_category, rule_id in manual_corrections.items():
+                            if rule_id is None:
+                                st.session_state.learned_category_mappings.pop(source_category, None)
+                            else:
+                                st.session_state.learned_category_mappings[source_category] = rule_id
+                        if batch_id in store:
+                            store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
+                            store[batch_id]["updated"] = time.time()
+                        st.rerun()
+
             if pricing_result.unresolved_handles:
                 unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
                 categories = sorted(value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value)
