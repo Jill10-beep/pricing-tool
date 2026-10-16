@@ -183,8 +183,8 @@ for file_index, uploaded in enumerate(uploaded_files):
             metrics = st.columns(5)
             metrics[0].metric("数据行", f"{before_summary.rows:,}")
             metrics[1].metric("商品", f"{before_summary.products:,}")
-            metrics[2].metric("SKU / 变体", f"{before_summary.variants:,}")
-            metrics[3].metric("附加图片行", f"{before_summary.image_only_rows:,}")
+            metrics[2].metric("有价格记录", f"{before_summary.variants:,}")
+            metrics[3].metric("无价格图片行", f"{before_summary.image_only_rows:,}")
             metrics[4].metric("字段", f"{len(source.columns):,}")
 
             pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
@@ -318,6 +318,10 @@ for file_index, uploaded in enumerate(uploaded_files):
 
             after_summary = validate_frame(pricing_result.frame)
             rule_issues = validate_fixed_pricing(pricing_result)
+            st.caption(
+                f"完整性检查：发现 {pricing_result.expected_products} 个可定价商品，"
+                f"已生成 {len(pricing_result.product_summary)} 个定价结果。"
+            )
             if before_summary.duplicate_skus:
                 st.warning(
                     f"原始产品包中有 {before_summary.duplicate_skus} 行使用重复 SKU。"

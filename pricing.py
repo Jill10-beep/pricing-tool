@@ -19,6 +19,7 @@ class PricingResult:
     frame: pd.DataFrame
     product_summary: pd.DataFrame
     unresolved_handles: tuple[str, ...]
+    expected_products: int
 
 
 def parse_number(value: object) -> float | None:
@@ -97,6 +98,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
     overrides = category_overrides or {}
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
+    expected_products = 0
     group_keys = _product_group_keys(output)
     for group_key, group in output.groupby(group_keys, sort=False, dropna=False):
         original_handles = group["Handle"].astype(str).str.strip()
@@ -107,6 +109,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         indices = group.index[variants.loc[group.index]]
         if len(indices) == 0:
             continue
+        expected_products += 1
         source_categories = group.get("category", pd.Series("", index=group.index)).astype(str).str.strip()
         source_category = next((value for value in source_categories if value), "未提供分类")
         titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
@@ -176,7 +179,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
             }
         )
 
-    return PricingResult(output, pd.DataFrame(product_records), tuple(unresolved))
+    return PricingResult(output, pd.DataFrame(product_records), tuple(unresolved), expected_products)
 
 
 def validate_fixed_pricing(result: PricingResult) -> tuple[str, ...]:
@@ -184,6 +187,15 @@ def validate_fixed_pricing(result: PricingResult) -> tuple[str, ...]:
     summary = result.product_summary
     if result.unresolved_handles:
         issues.append("存在无法识别品类的商品")
+    handled_products = len(summary) + len(result.unresolved_handles)
+    if handled_products != result.expected_products:
+        issues.append(
+            f"商品处理不完整：应处理 {result.expected_products} 个，实际仅处理 {handled_products} 个"
+        )
+    if len(summary) != result.expected_products and not result.unresolved_handles:
+        issues.append(
+            f"定价结果不完整：应生成 {result.expected_products} 个商品结果，实际仅生成 {len(summary)} 个"
+        )
     if summary.empty:
         return tuple(issues or ["没有可定价商品"])
     if not summary["新售价"].gt(0).all():

@@ -59,7 +59,8 @@ def validate_frame(frame: pd.DataFrame, max_discount: float = 0.20) -> Validatio
 
     if "sku_code" in frame:
         sku = frame.loc[variants, "sku_code"].astype(str).str.strip()
-        duplicate_skus = int(sku.duplicated(keep=False).sum())
+        populated_sku = sku[sku.ne("")]
+        duplicate_skus = int(populated_sku.duplicated(keep=False).sum())
     else:
         duplicate_skus = 0
 
