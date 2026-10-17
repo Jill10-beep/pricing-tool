@@ -287,7 +287,11 @@ for file_index, uploaded in enumerate(uploaded_files):
             if pricing_result.unresolved_handles:
                 unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
                 categories = sorted(value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value)
-                st.warning("价格表中没有找到明确对应项。请选择一级品类，再选择要参考的具体品类；确认前不会修改和导出。")
+                st.warning(
+                    f"有 {len(pricing_result.unresolved_handles)} 个商品暂时无法识别。"
+                    "这些商品会保持原价格不变，其余商品照常修改并允许下载。"
+                    "你也可以在下面选择参考品类后重新处理。"
+                )
                 selected_mappings = {}
                 for category in categories:
                     category_rows = unresolved_rows[unresolved_rows["category"].astype(str).str.strip() == category]
@@ -363,7 +367,6 @@ for file_index, uploaded in enumerate(uploaded_files):
                 shown = preview[preview["发生变化"]] if changed_only else preview
                 st.dataframe(shown, use_container_width=True, hide_index=True, height=380)
 
-            after_summary = validate_frame(pricing_result.frame)
             rule_issues = validate_fixed_pricing(pricing_result)
             st.caption(
                 f"完整性检查：发现 {pricing_result.expected_products} 个可定价商品，"
@@ -375,27 +378,26 @@ for file_index, uploaded in enumerate(uploaded_files):
                     "程序不会修改 SKU；该问题只作提醒，不再阻止价格文件下载。"
                 )
             blocked = bool(
-                pricing_result.unresolved_handles
-                or rule_issues
+                rule_issues
                 or not similar_confirmed
-                or after_summary.invalid_prices
-                or after_summary.zero_prices
             )
             if blocked:
                 needs_attention += 1
                 if rule_issues:
                     st.error("；".join(rule_issues))
-                elif after_summary.invalid_prices:
-                    st.error(f"仍有 {after_summary.invalid_prices} 个 SKU 的售价不是有效数字，暂不能导出。")
-                elif after_summary.zero_prices:
-                    st.error(f"仍有 {after_summary.zero_prices} 个 SKU 的售价为 0，暂不能导出。")
                 elif not similar_confirmed:
                     st.info("确认相似品类后即可下载此文件。")
             else:
                 output_name = uploaded_name.rsplit(".", 1)[0] + output_suffix(file_format)
                 output_bytes = export_csv(pricing_result.frame, loaded, file_format)
                 completed_outputs.append((output_name, output_bytes))
-                st.success("此产品包已完成并通过校验。")
+                if pricing_result.unresolved_handles:
+                    st.warning(
+                        f"已完成部分定价：{len(pricing_result.product_summary)} 个商品已修改，"
+                        f"{len(pricing_result.unresolved_handles)} 个无法识别的商品保持原价。"
+                    )
+                else:
+                    st.success("此产品包已完成并通过校验。")
                 st.download_button(
                     f"下载 {output_name}",
                     data=output_bytes,

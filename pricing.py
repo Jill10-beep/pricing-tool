@@ -188,8 +188,6 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
 def validate_fixed_pricing(result: PricingResult) -> tuple[str, ...]:
     issues: list[str] = []
     summary = result.product_summary
-    if result.unresolved_handles:
-        issues.append("存在无法识别品类的商品")
     handled_products = len(summary) + len(result.unresolved_handles)
     if handled_products != result.expected_products:
         issues.append(
@@ -199,8 +197,11 @@ def validate_fixed_pricing(result: PricingResult) -> tuple[str, ...]:
         issues.append(
             f"定价结果不完整：应生成 {result.expected_products} 个商品结果，实际仅生成 {len(summary)} 个"
         )
+    # Unresolved products are intentionally kept unchanged and do not block a
+    # partial export. They are counted above so a genuinely lost product still
+    # fails completeness validation.
     if summary.empty:
-        return tuple(issues or ["没有可定价商品"])
+        return tuple(issues)
     if not summary["新售价"].gt(0).all():
         issues.append("存在售价不大于 0 的商品")
     if not ((summary["新售价"] >= summary["区间下限"]) & (summary["新售价"] <= summary["区间上限"])).all():
