@@ -5,6 +5,9 @@
 ## 功能
 
 - 自动识别 UTF-8、GB18030 等常见 CSV 编码
+- 两个独立上传入口：供应商原格式和 Shopify CSV 格式
+- 两个入口共用完全相同的品类识别、人工纠正、价格及折扣规则
+- Shopify 导出只回写 `Variant Price` 和 `Variant Compare At Price`，其余 Shopify 字段保持原样
 - 区分商品首行、SKU 变体行和纯图片行
 - 检查 SKU、售价、折扣及图片链接格式
 - 内置各商品品类的固定美元售价区间

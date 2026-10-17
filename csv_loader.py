@@ -95,19 +95,27 @@ def load_csv_bytes(data: bytes) -> LoadedCsv:
     )
 
 
-def replace_price_columns(loaded: LoadedCsv, frame: pd.DataFrame) -> bytes:
+def replace_price_columns(
+    loaded: LoadedCsv,
+    frame: pd.DataFrame,
+    source_price_columns: tuple[str, str] = ("price", "compare_at_price"),
+) -> bytes:
     if len(frame) + 1 != len(loaded.raw_rows):
         raise ValueError("导出行数与原文件不一致。")
-    header = list(frame.columns)
-    price_indexes = [header.index(name) for name in ("price", "compare_at_price")]
+    source_header = list(loaded.frame.columns)
+    frame_price_columns = ("price", "compare_at_price")
+    try:
+        price_indexes = [source_header.index(name) for name in source_price_columns]
+    except ValueError as exc:
+        raise ValueError("原文件缺少价格列，无法安全导出。") from exc
     output_rows: list[str] = []
     for row_number, raw_row in enumerate(loaded.raw_rows):
         cells = list(raw_row)
-        if len(cells) != len(header):
+        if len(cells) != len(source_header):
             raise ValueError(f"第 {row_number + 1} 行字段数量异常，已停止导出。")
         if row_number > 0:
-            for column_index in price_indexes:
-                value = str(frame.iloc[row_number - 1, column_index])
+            for column_index, frame_column in zip(price_indexes, frame_price_columns):
+                value = str(frame.iloc[row_number - 1][frame_column])
                 original = cells[column_index]
                 stripped = original.strip()
                 if len(stripped) >= 2 and stripped.startswith('"') and stripped.endswith('"'):

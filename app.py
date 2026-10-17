@@ -11,6 +11,7 @@ import streamlit as st
 from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
 from exporter import export_csv
+from format_adapter import SHOPIFY, SUPPLIER, output_suffix, prepare_frame
 from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pricing
 from validator import validate_frame
 
@@ -93,24 +94,39 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">上传产品包</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">选择产品包入口</div>', unsafe_allow_html=True)
+format_label = st.radio(
+    "产品包格式",
+    ["入口一 · 供应商原格式", "入口二 · Shopify 格式"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+file_format = SHOPIFY if "Shopify" in format_label else SUPPLIER
+format_help = (
+    "上传 Shopify 导出的 CSV；处理后仍按 Shopify 原列结构导出。"
+    if file_format == SHOPIFY
+    else "上传当前使用的供应商产品包；处理后保留原始列结构。"
+)
+st.caption(format_help)
 new_uploads = st.file_uploader(
-    "上传产品 CSV",
+    "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
     type=["csv"],
     accept_multiple_files=True,
     label_visibility="collapsed",
-    key="product_csv_uploader",
+    key=f"product_csv_uploader_{file_format}",
 )
 
 store = _batch_store()
-batch_id = st.query_params.get("batch")
+batch_param = f"batch_{file_format}"
+batch_id = st.query_params.get(batch_param)
 if new_uploads:
     if not batch_id or batch_id not in store:
         batch_id = uuid.uuid4().hex
-        st.query_params["batch"] = batch_id
+        st.query_params[batch_param] = batch_id
     previous_mappings = store.get(batch_id, {}).get("mappings", {})
     store[batch_id] = {
         "files": [{"name": item.name, "data": item.getvalue()} for item in new_uploads],
+        "format": file_format,
         "mappings": dict(previous_mappings),
         "updated": time.time(),
     }
@@ -173,7 +189,7 @@ for file_index, uploaded in enumerate(uploaded_files):
     with st.expander(f"{file_index + 1:02d}  ·  {uploaded_name}", expanded=True):
         try:
             loaded = load_csv_bytes(uploaded_data)
-            source = loaded.frame
+            source = prepare_frame(loaded.frame, file_format)
             before_summary = validate_frame(source)
             if before_summary.missing_columns:
                 st.error("缺少必要字段：" + ", ".join(before_summary.missing_columns))
@@ -345,8 +361,8 @@ for file_index, uploaded in enumerate(uploaded_files):
                 elif not similar_confirmed:
                     st.info("确认相似品类后即可下载此文件。")
             else:
-                output_name = uploaded_name.rsplit(".", 1)[0] + "-正确价格.csv"
-                output_bytes = export_csv(pricing_result.frame, loaded)
+                output_name = uploaded_name.rsplit(".", 1)[0] + output_suffix(file_format)
+                output_bytes = export_csv(pricing_result.frame, loaded, file_format)
                 completed_outputs.append((output_name, output_bytes))
                 st.success("此产品包已完成并通过校验。")
                 st.download_button(
