@@ -128,7 +128,10 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
                 match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
             if rule is None:
                 rule, match_method = infer_similar_category(_product_text(group))
-        if rule is None or has_category_conflict(structured_text, rule):
+        # A saved manual mapping is an explicit user decision and must outrank
+        # automatic conflict heuristics. Otherwise a few titles inside the same
+        # supplier category can be rejected even after the user confirms it.
+        if rule is None or (override_rule is None and has_category_conflict(structured_text, rule)):
             unresolved.append(handle_text)
         else:
             classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))
