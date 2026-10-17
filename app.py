@@ -18,11 +18,32 @@ from validator import validate_frame
 
 st.set_page_config(page_title="产品自动定价工具", page_icon="◆", layout="wide")
 
+WORKSPACE_TTL_SECONDS = 6 * 60 * 60
+MAX_ACTIVE_WORKSPACES = 50
+
 
 @st.cache_resource
-def _batch_store() -> dict[str, dict[str, object]]:
-    """Keep uploaded bytes across reruns and ordinary browser refreshes."""
+def _workspace_store() -> dict[str, dict[str, object]]:
+    """Temporary server storage, isolated by an unguessable workspace token."""
     return {}
+
+
+def _valid_workspace_id(value: object) -> bool:
+    text = str(value or "")
+    return len(text) == 32 and all(character in "0123456789abcdef" for character in text)
+
+
+def _prune_workspaces(store: dict[str, dict[str, object]]) -> None:
+    now = time.time()
+    expired = [
+        key for key, value in store.items()
+        if now - float(value.get("updated", 0)) > WORKSPACE_TTL_SECONDS
+    ]
+    for key in expired:
+        store.pop(key, None)
+    while len(store) > MAX_ACTIVE_WORKSPACES:
+        oldest = min(store, key=lambda key: float(store[key].get("updated", 0)))
+        store.pop(oldest, None)
 
 
 def _upload_name(uploaded: object) -> str:
@@ -94,6 +115,34 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+store = _workspace_store()
+_prune_workspaces(store)
+workspace_id = st.query_params.get("workspace")
+if not _valid_workspace_id(workspace_id):
+    workspace_id = uuid.uuid4().hex
+    st.query_params["workspace"] = workspace_id
+workspace = store.setdefault(
+    workspace_id,
+    {
+        "files": {SUPPLIER: [], SHOPIFY: []},
+        "mappings": {},
+        "updated": time.time(),
+    },
+)
+workspace["updated"] = time.time()
+
+workspace_info, workspace_action = st.columns([4, 1])
+workspace_info.info(
+    "这是你的独立临时工作区。其他访问者会自动进入不同工作区，无法看到这里的上传文件和处理结果。"
+)
+if workspace_action.button("新建空白工作区", use_container_width=True):
+    store.pop(workspace_id, None)
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.query_params.clear()
+    st.rerun()
+st.caption("分享给别人时，只发送 .streamlit.app 主网址，不要复制包含 ?workspace= 的当前工作区网址。工作区闲置 6 小时后自动清理。")
+
 st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">选择产品包入口</div>', unsafe_allow_html=True)
 format_label = st.radio(
     "产品包格式",
@@ -116,30 +165,16 @@ new_uploads = st.file_uploader(
     key=f"product_csv_uploader_{file_format}",
 )
 
-store = _batch_store()
-batch_param = f"batch_{file_format}"
-batch_id = st.query_params.get(batch_param)
 if new_uploads:
-    if not batch_id or batch_id not in store:
-        batch_id = uuid.uuid4().hex
-        st.query_params[batch_param] = batch_id
-    previous_mappings = store.get(batch_id, {}).get("mappings", {})
-    store[batch_id] = {
-        "files": [{"name": item.name, "data": item.getvalue()} for item in new_uploads],
-        "format": file_format,
-        "mappings": dict(previous_mappings),
-        "updated": time.time(),
-    }
-    # Limit shared cloud memory while retaining recent refreshable batches.
-    if len(store) > 20:
-        oldest = min(store, key=lambda key: float(store[key].get("updated", 0)))
-        if oldest != batch_id:
-            store.pop(oldest, None)
+    workspace["files"][file_format] = [
+        {"name": item.name, "data": item.getvalue()} for item in new_uploads
+    ]
+    workspace["updated"] = time.time()
 
-uploaded_files = list(store.get(batch_id, {}).get("files", [])) if batch_id in store else []
+uploaded_files = list(workspace["files"].get(file_format, []))
 
 if "learned_category_mappings" not in st.session_state:
-    st.session_state.learned_category_mappings = dict(store.get(batch_id, {}).get("mappings", {})) if batch_id in store else {}
+    st.session_state.learned_category_mappings = dict(workspace.get("mappings", {}))
 
 if uploaded_files:
     st.success(f"当前批次已保留 {len(uploaded_files)} 个产品包。普通页面刷新不会丢失；应用重启或重新部署后需重新上传。")
@@ -170,8 +205,7 @@ with st.expander("品类映射记忆（可选）"):
             imported = json.loads(mapping_file.getvalue().decode("utf-8"))
             valid = {str(key): str(value) for key, value in imported.items() if resolve_rule(str(value)) is not None}
             st.session_state.learned_category_mappings.update(valid)
-            if batch_id in store:
-                store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
+            workspace["mappings"] = dict(st.session_state.learned_category_mappings)
             st.success(f"已导入 {len(valid)} 条品类映射。")
         except Exception:
             st.error("映射文件无法读取。")
@@ -246,9 +280,8 @@ for file_index, uploaded in enumerate(uploaded_files):
                                 st.session_state.learned_category_mappings.pop(source_category, None)
                             else:
                                 st.session_state.learned_category_mappings[source_category] = rule_id
-                        if batch_id in store:
-                            store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
-                            store[batch_id]["updated"] = time.time()
+                        workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                        workspace["updated"] = time.time()
                         st.rerun()
 
             if pricing_result.unresolved_handles:
@@ -297,9 +330,8 @@ for file_index, uploaded in enumerate(uploaded_files):
                     disabled=len(selected_mappings) != len(categories),
                 ):
                     st.session_state.learned_category_mappings.update(selected_mappings)
-                    if batch_id in store:
-                        store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
-                        store[batch_id]["updated"] = time.time()
+                    workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                    workspace["updated"] = time.time()
                     st.rerun()
 
             if "匹配方式" in pricing_result.product_summary.columns:
@@ -322,8 +354,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                     if similar_confirmed and "原始分类" in similar:
                         mapped_ids = [f"{primary}::{name}" for primary, name in zip(similar["一级品类"], similar["识别品类"])]
                         st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], mapped_ids)))
-                        if batch_id in store:
-                            store[batch_id]["mappings"] = dict(st.session_state.learned_category_mappings)
+                        workspace["mappings"] = dict(st.session_state.learned_category_mappings)
 
             with changes_tab:
                 preview = build_change_preview(source, pricing_result.frame)
