@@ -142,13 +142,34 @@ def _category_level_decisions(
     return decisions
 
 
-def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] | None = None) -> PricingResult:
+def _apply_price_range_override(
+    rule: CategoryRule,
+    range_overrides: dict[str, dict[str, float]],
+) -> CategoryRule:
+    custom = range_overrides.get(rule.rule_id)
+    if not custom:
+        return rule
+    return CategoryRule(
+        rule.primary,
+        rule.name,
+        float(custom["minimum"]),
+        float(custom["maximum"]),
+        rule.keywords,
+    )
+
+
+def apply_fixed_pricing(
+    frame: pd.DataFrame,
+    category_overrides: dict[str, str] | None = None,
+    price_range_overrides: dict[str, dict[str, float]] | None = None,
+) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
     if "Handle" not in output:
         raise ValueError("缺少 Handle 字段，无法按商品统一价格。")
 
     overrides = category_overrides or {}
+    range_overrides = price_range_overrides or {}
     category_decisions = _category_level_decisions(output, overrides)
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
@@ -184,6 +205,8 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
                 match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
             if rule is None:
                 rule, match_method = infer_similar_category(_product_text(group))
+        if rule is not None:
+            rule = _apply_price_range_override(rule, range_overrides)
         # A saved manual mapping is an explicit user decision and must outrank
         # automatic conflict heuristics. Otherwise a few titles inside the same
         # supplier category can be rejected even after the user confirms it.

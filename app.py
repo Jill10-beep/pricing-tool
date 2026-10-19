@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from io import BytesIO
 import time
 import uuid
 import zipfile
 
+import pandas as pd
 import streamlit as st
 
 from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
@@ -126,6 +128,7 @@ workspace = store.setdefault(
     {
         "files": {SUPPLIER: [], SHOPIFY: []},
         "mappings": {},
+        "price_ranges": {},
         "updated": time.time(),
     },
 )
@@ -164,6 +167,98 @@ new_uploads = st.file_uploader(
     label_visibility="collapsed",
     key=f"product_csv_uploader_{file_format}",
 )
+
+if "price_range_overrides" not in st.session_state:
+    st.session_state.price_range_overrides = dict(workspace.get("price_ranges", {}))
+if "price_editor_version" not in st.session_state:
+    st.session_state.price_editor_version = 0
+
+with st.expander("价格范围管理 · 修改、导入或保存价格表", expanded=False):
+    st.caption("修改后点击保存。这里只改变价格区间，不改变品类名称；新范围会立即用于供应商和 Shopify 两个入口。")
+    range_rows = []
+    for rule in CATEGORY_RULES:
+        custom = st.session_state.price_range_overrides.get(rule.rule_id, {})
+        range_rows.append({
+            "规则ID": rule.rule_id,
+            "一级品类": rule.primary,
+            "具体品类": rule.name,
+            "最低价": float(custom.get("minimum", rule.minimum)),
+            "最高价": float(custom.get("maximum", rule.maximum)),
+        })
+    edited_ranges = st.data_editor(
+        pd.DataFrame(range_rows),
+        use_container_width=True,
+        hide_index=True,
+        disabled=["规则ID", "一级品类", "具体品类"],
+        column_config={
+            "最低价": st.column_config.NumberColumn("最低价（USD）", min_value=0.01, step=0.01, format="$%.2f"),
+            "最高价": st.column_config.NumberColumn("最高价（USD）", min_value=0.01, step=0.01, format="$%.2f"),
+        },
+        key=f"price_range_editor_{st.session_state.price_editor_version}",
+        height=420,
+    )
+    price_actions = st.columns(3)
+    if price_actions[0].button("保存价格范围", use_container_width=True):
+        invalid = edited_ranges[
+            edited_ranges["最低价"].isna()
+            | edited_ranges["最高价"].isna()
+            | (edited_ranges["最低价"] <= 0)
+            | (edited_ranges["最高价"] < edited_ranges["最低价"])
+        ]
+        if not invalid.empty:
+            st.error("保存失败：最低价必须大于0，最高价必须大于或等于最低价。")
+        else:
+            defaults = {rule.rule_id: rule for rule in CATEGORY_RULES}
+            saved_ranges = {}
+            for record in edited_ranges.to_dict("records"):
+                rule = defaults[str(record["规则ID"])]
+                minimum = round(float(record["最低价"]), 2)
+                maximum = round(float(record["最高价"]), 2)
+                if minimum != rule.minimum or maximum != rule.maximum:
+                    saved_ranges[rule.rule_id] = {"minimum": minimum, "maximum": maximum}
+            st.session_state.price_range_overrides = saved_ranges
+            st.session_state.price_editor_version += 1
+            workspace["price_ranges"] = dict(saved_ranges)
+            workspace["updated"] = time.time()
+            st.success(f"价格表已保存，共有 {len(saved_ranges)} 个品类使用自定义范围。")
+            st.rerun()
+    if price_actions[1].button("恢复默认价格表", use_container_width=True):
+        st.session_state.price_range_overrides = {}
+        st.session_state.price_editor_version += 1
+        st.session_state.pop("last_price_range_import", None)
+        workspace["price_ranges"] = {}
+        workspace["updated"] = time.time()
+        st.rerun()
+    price_actions[2].download_button(
+        "下载自定义价格表",
+        data=json.dumps(st.session_state.price_range_overrides, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="custom-price-ranges.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+    range_import = st.file_uploader("导入以前保存的自定义价格表", type=["json"], key="price_range_json")
+    if range_import is not None:
+        import_bytes = range_import.getvalue()
+        import_digest = hashlib.sha256(import_bytes).hexdigest()
+        try:
+            imported_ranges = json.loads(import_bytes.decode("utf-8"))
+            known_ids = {rule.rule_id for rule in CATEGORY_RULES}
+            valid_ranges = {}
+            for rule_id, values in imported_ranges.items():
+                minimum = float(values["minimum"])
+                maximum = float(values["maximum"])
+                if rule_id not in known_ids or minimum <= 0 or maximum < minimum:
+                    raise ValueError
+                valid_ranges[str(rule_id)] = {"minimum": round(minimum, 2), "maximum": round(maximum, 2)}
+            if st.session_state.get("last_price_range_import") != import_digest:
+                st.session_state.price_range_overrides = valid_ranges
+                st.session_state.price_editor_version += 1
+                st.session_state.last_price_range_import = import_digest
+                workspace["price_ranges"] = dict(valid_ranges)
+                workspace["updated"] = time.time()
+                st.success(f"已导入 {len(valid_ranges)} 个自定义价格范围。")
+        except Exception:
+            st.error("自定义价格表无法读取，或存在无效价格范围。")
 
 if new_uploads:
     workspace["files"][file_format] = [
@@ -237,7 +332,11 @@ for file_index, uploaded in enumerate(uploaded_files):
             metrics[3].metric("无价格图片行", f"{before_summary.image_only_rows:,}")
             metrics[4].metric("字段", f"{len(source.columns):,}")
 
-            pricing_result = apply_fixed_pricing(source, st.session_state.learned_category_mappings)
+            pricing_result = apply_fixed_pricing(
+                source,
+                st.session_state.learned_category_mappings,
+                st.session_state.price_range_overrides,
+            )
 
             # Manual correction is always available, even when automatic
             # classification succeeded. Mappings are stored by supplier category.
