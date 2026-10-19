@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import Counter
 from dataclasses import dataclass
 
 import pandas as pd
@@ -89,6 +90,58 @@ def _product_group_keys(frame: pd.DataFrame) -> pd.Series:
     return handles.where(handles.ne(""), fallback)
 
 
+def _category_level_decisions(
+    frame: pd.DataFrame,
+    overrides: dict[str, str],
+) -> dict[str, tuple[CategoryRule | None, str | None, bool]]:
+    """Choose one rule per supplier category so sibling products cannot drift."""
+    decisions: dict[str, tuple[CategoryRule | None, str | None, bool]] = {}
+    categories = frame.get("category", pd.Series("", index=frame.index)).astype(str).str.strip()
+    for source_category in (value for value in categories.unique() if value):
+        override_rule = resolve_rule(overrides.get(source_category, ""))
+        if override_rule:
+            decisions[source_category] = (
+                override_rule,
+                f"已确认映射：{source_category} → {override_rule.primary} → {override_rule.name}",
+                True,
+            )
+            continue
+
+        direct_rule = classify_product(source_category)
+        if direct_rule and not has_category_conflict(source_category, direct_rule):
+            decisions[source_category] = (
+                direct_rule,
+                f"原始分类统一匹配：{direct_rule.primary} → {direct_rule.name}",
+                False,
+            )
+            continue
+
+        category_rows = frame[categories.eq(source_category)]
+        titles = category_rows.get("Title", pd.Series("", index=category_rows.index)).astype(str).str.strip()
+        unique_titles = tuple(dict.fromkeys(value for value in titles if value))
+        title_rules = [rule for title in unique_titles if (rule := classify_product(title)) is not None]
+        counts = Counter(rule.rule_id for rule in title_rules)
+        if counts and len(title_rules) >= max(2, math.ceil(len(unique_titles) * 0.60)):
+            best_id, best_count = counts.most_common(1)[0]
+            if best_count / len(title_rules) >= 0.80:
+                majority_rule = next(rule for rule in title_rules if rule.rule_id == best_id)
+                if not has_category_conflict(source_category, majority_rule):
+                    decisions[source_category] = (
+                        majority_rule,
+                        f"同一原始分类多数一致：{majority_rule.primary} → {majority_rule.name}",
+                        False,
+                    )
+                    continue
+
+        combined_text = " ".join((source_category, *unique_titles[:20]))
+        similar_rule, similar_method = infer_similar_category(combined_text)
+        if similar_rule and not has_category_conflict(source_category, similar_rule):
+            decisions[source_category] = (similar_rule, similar_method, False)
+        else:
+            decisions[source_category] = (None, None, False)
+    return decisions
+
+
 def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] | None = None) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
@@ -96,6 +149,7 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         raise ValueError("缺少 Handle 字段，无法按商品统一价格。")
 
     overrides = category_overrides or {}
+    category_decisions = _category_level_decisions(output, overrides)
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     expected_products = 0
@@ -115,14 +169,16 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
         title = next((value for value in titles if value), "")
         structured_text = f"{source_category} {title}"
-        override_name = overrides.get(source_category)
-        override_rule = resolve_rule(override_name) if override_name else None
-        if override_rule:
-            rule, match_method = override_rule, f"已确认映射：{source_category} → {override_rule.primary} → {override_rule.name}"
+        category_decision = category_decisions.get(source_category)
+        override_rule = category_decision[0] if category_decision and category_decision[2] else None
+        if category_decision:
+            rule, match_method, _ = category_decision
         else:
-            # Evidence priority: supplier category > product title > tags.
-            rule = classify_product(source_category)
-            match_method = f"原始分类匹配：{rule.primary} → {rule.name}" if rule else None
+            # Only products without a supplier category may fall back to their
+            # own title. A populated supplier category is always decided once
+            # for the whole category by _category_level_decisions above.
+            rule = None
+            match_method = None
             if rule is None:
                 rule = classify_product(title)
                 match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
@@ -131,7 +187,8 @@ def apply_fixed_pricing(frame: pd.DataFrame, category_overrides: dict[str, str] 
         # A saved manual mapping is an explicit user decision and must outrank
         # automatic conflict heuristics. Otherwise a few titles inside the same
         # supplier category can be rejected even after the user confirms it.
-        if rule is None or (override_rule is None and has_category_conflict(structured_text, rule)):
+        conflict_text = structured_text if category_decision is None else source_category
+        if rule is None or (override_rule is None and has_category_conflict(conflict_text, rule)):
             unresolved.append(handle_text)
         else:
             classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))

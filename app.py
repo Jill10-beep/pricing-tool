@@ -295,7 +295,27 @@ for file_index, uploaded in enumerate(uploaded_files):
                 selected_mappings = {}
                 for category in categories:
                     category_rows = unresolved_rows[unresolved_rows["category"].astype(str).str.strip() == category]
-                    sample_titles = " ".join(category_rows["Title"].astype(str).drop_duplicates().head(12)) if "Title" in category_rows else ""
+                    category_titles = display_titles(source).loc[category_rows.index]
+                    product_details = category_rows.assign(商品名称=category_titles.values).groupby(
+                        "Handle", sort=False, dropna=False
+                    ).agg(
+                        商品名称=("商品名称", "first"),
+                        原始分类=("category", "first"),
+                        原售价=("price", "first"),
+                        SKU数量=("price", "size"),
+                    ).reset_index()
+                    with st.expander(
+                        f"查看未识别商品 · {category}（{len(product_details)} 个）",
+                        expanded=True,
+                    ):
+                        st.dataframe(
+                            product_details[["商品名称", "Handle", "原始分类", "原售价", "SKU数量"]],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(420, 72 + len(product_details) * 35),
+                        )
+                        st.caption("下面选择的参考品类会应用到这张表中的所有商品。")
+                    sample_titles = " ".join(product_details["商品名称"].astype(str).head(12))
                     candidates = rank_similar_categories(f"{category} {sample_titles}", 3)
                     if candidates:
                         st.caption("智能候选（只供参考，确认后才定价）")
@@ -309,7 +329,12 @@ for file_index, uploaded in enumerate(uploaded_files):
                             use_container_width=True,
                             hide_index=True,
                         )
-                    suggested_primary = candidates[0][0].primary if candidates else infer_primary_category(category)
+                    # Explicit supplier-category evidence outranks fuzzy title
+                    # similarity (for example, "Men's ... Vests" must not be
+                    # preselected as bedding because a title says "quilted").
+                    suggested_primary = infer_primary_category(category)
+                    if not suggested_primary and candidates:
+                        suggested_primary = candidates[0][0].primary
                     primary_options = ["请选择"] + list(PRIMARY_CATEGORIES)
                     primary_index = primary_options.index(suggested_primary) if suggested_primary in primary_options else 0
                     primary = st.selectbox(
