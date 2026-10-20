@@ -94,7 +94,7 @@ Jewelry and Accessories|Scarves|14.99|29.99
 Jewelry and Accessories|Socks|9.99|16.99
 Jewelry and Accessories|Ties|14.99|24.99
 Jewelry and Accessories|Hair Accessories|6.99|14.99
-Jewelry and Accessories|Bras|19.99|29.99
+Underwear, Sleepwear and Swimwear|Bras|19.99|29.99
 Underwear, Sleepwear and Swimwear|Panties (Multipacks)|12.99|19.99
 Underwear, Sleepwear and Swimwear|Lingerie Sets|24.99|39.99
 Underwear, Sleepwear and Swimwear|Bodysuits|24.99|34.99
@@ -197,6 +197,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Women's Clothing::Sets": ("women's, sets", "women's set", "womens set", "women tracksuit", "jogger set", "two piece set", "女套装", "女运动套装"),
     "Men's Clothing::Underwear": ("boxer brief", "boxer briefs", "men underwear", "men's underwear", "briefs", "trunks", "男士内裤"),
     "Underwear, Sleepwear and Swimwear::Panties (Multipacks)": ("panties", "panty", "women's panties", "womens panties", "女士内裤"),
+    "Underwear, Sleepwear and Swimwear::Bras": ("bra", "bras", "bralette", "bralettes", "sports bra", "wireless bra", "文胸", "胸罩", "内衣上装"),
     "Jewelry and Accessories::Ties": ("necktie", "neckties", "neck tie", "knit tie", "bow tie", "tie", "ties", "领带", "领结"),
     "Home Decor and Bedding::Furniture": ("furniture", "chair", "sofa", "cabinet", "shelf", "家具", "椅子", "沙发"),
     "Men's Clothing::Shirts": ("men shirt", "men's shirt", "mens shirt", "男衬衫"),
@@ -208,6 +209,10 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Footwear::Running Shoes": ("running shoe", "跑鞋"),
     "Footwear::Casual Shoes": ("casual shoe", "休闲鞋"),
     "Footwear::Boots": ("work boot", "work boots", "western boot", "western boots", "cowboy boot", "cowboy boots", "leather boot", "leather boots", "boot", "boots", "靴子", "工作靴", "西部靴"),
+}
+
+LEGACY_RULE_IDS = {
+    "Jewelry and Accessories::Bras": "Underwear, Sleepwear and Swimwear::Bras",
 }
 
 
@@ -408,6 +413,7 @@ def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
 
 
 def resolve_rule(value: str) -> CategoryRule | None:
+    value = LEGACY_RULE_IDS.get(value, value)
     by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
     if value in by_id:
         return by_id[value]

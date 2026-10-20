@@ -61,21 +61,21 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
     :root { --ink:#152238; --muted:#64748B; --line:#E7EAF0; --gold:#B58A4B; --paper:#F7F8FA; }
     .stApp { background: #F7F8FA; color: var(--ink); }
-    .block-container { max-width: 1480px; padding-top: 2.2rem; padding-bottom: 5rem; }
+    .block-container { max-width: 1480px; padding-top: 1.6rem; padding-bottom: 5rem; }
     html, body, [class*="css"] { font-family: "DM Sans", "Noto Sans SC", sans-serif; }
     #MainMenu, footer, header { visibility: hidden; }
 
     .hero {
-        position: relative; overflow: hidden; padding: 42px 46px; border-radius: 22px;
+        position: relative; overflow: hidden; padding: 34px 40px; border-radius: 20px;
         background: linear-gradient(125deg, #101B2D 0%, #1A2941 68%, #263B5B 100%);
         box-shadow: 0 18px 55px rgba(15, 29, 50, .16); margin-bottom: 22px;
     }
     .hero:after { content:""; position:absolute; width:320px; height:320px; right:-90px; top:-160px;
         border:1px solid rgba(201,166,109,.35); border-radius:50%; box-shadow:0 0 0 55px rgba(201,166,109,.06); }
     .eyebrow { color:#D8B77E; font-size:12px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; }
-    .hero h1 { color:#FFF; font-size:38px; line-height:1.15; margin:10px 0 12px; letter-spacing:-.02em; }
+    .hero h1 { color:#FFF; font-size:34px; line-height:1.15; margin:9px 0 10px; letter-spacing:-.02em; }
     .hero p { color:#BFC9D8; max-width:720px; margin:0; font-size:15px; line-height:1.8; }
-    .stepbar { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0 26px; }
+    .stepbar { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 26px; }
     .step { background:#FFF; border:1px solid var(--line); border-radius:12px; padding:13px 16px; color:#697386; font-size:13px; }
     .step b { color:var(--gold); margin-right:8px; }
     .section-kicker { color:var(--gold); font-weight:700; font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin-top:8px; }
@@ -87,6 +87,11 @@ st.markdown(
     .download-panel { background:linear-gradient(120deg,#F1E8D9,#FAF7F1); border:1px solid #E4D2B5; border-radius:16px; padding:22px 24px; margin-top:18px; }
     .download-panel h3 { color:#4B3820; margin:0 0 5px; font-size:20px; }
     .download-panel p { color:#806A4C; margin:0; font-size:13px; }
+    .page-head { display:flex; align-items:end; justify-content:space-between; gap:18px; margin:8px 0 18px; }
+    .page-head h2 { margin:3px 0 0; color:var(--ink); font-size:26px; }
+    .page-head p { margin:0; color:var(--muted); font-size:14px; }
+    .format-note { background:#FFF; border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin:8px 0 14px; color:var(--muted); }
+    .status-strip { background:#F0F7F3; border:1px solid #CFE6D7; border-radius:13px; padding:14px 17px; color:#245C39; font-weight:600; margin:12px 0; }
 
     div[data-testid="stFileUploader"] { background:#FFF; border:1px solid var(--line); border-radius:16px; padding:13px 18px 5px; }
     div[data-testid="stFileUploaderDropzone"] { border:1px dashed #BAC3D1; background:#FAFBFC; border-radius:12px; }
@@ -97,21 +102,25 @@ st.markdown(
     div[data-testid="stAlert"] { border-radius:12px; border-width:1px; }
     div[data-testid="stExpander"] { background:#FFF; border:1px solid var(--line); border-radius:13px; }
     div[data-testid="stTabs"] button { font-weight:600; }
+    section[data-testid="stSidebar"] { background:#111D30; border-right:0; }
+    section[data-testid="stSidebar"] * { color:#E8EEF7; }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:10px; padding:10px 12px; margin-bottom:6px; }
+    div[data-testid="stRadio"] > div[role="radiogroup"] { gap:12px; }
+    main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:#FFF; border:1px solid var(--line); border-radius:14px; padding:16px 20px; min-width:260px; box-shadow:0 5px 16px rgba(23,34,56,.035); }
     .stButton>button, .stDownloadButton>button { border-radius:10px; min-height:46px; font-weight:700; }
     .stDownloadButton>button { background:#17253B; color:#FFF; border:1px solid #17253B; }
     .stDownloadButton>button:hover { background:#223653; color:#FFF; border-color:#223653; }
     @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:30px}.stepbar,.empty-grid{grid-template-columns:1fr 1fr} }
     </style>
     <div class="hero">
-      <div class="eyebrow">Pricing Operations Workspace</div>
+      <div class="eyebrow">Pricing Workspace</div>
       <h1>产品自动定价工具</h1>
       <p>上传产品包，系统自动识别商品结构与相似品类，执行固定价格及折扣规则，并生成可直接使用的新产品包。</p>
     </div>
     <div class="stepbar">
-      <div class="step"><b>01</b>上传产品包</div>
-      <div class="step"><b>02</b>识别品类</div>
-      <div class="step"><b>03</b>检查价格</div>
-      <div class="step"><b>04</b>下载结果</div>
+      <div class="step"><b>01</b>选择格式并上传</div>
+      <div class="step"><b>02</b>检查品类与价格</div>
+      <div class="step"><b>03</b>下载产品包</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -134,46 +143,71 @@ workspace = store.setdefault(
 )
 workspace["updated"] = time.time()
 
-workspace_info, workspace_action = st.columns([4, 1])
-workspace_info.info(
-    "这是你的独立临时工作区。其他访问者会自动进入不同工作区，无法看到这里的上传文件和处理结果。"
-)
-if workspace_action.button("新建空白工作区", use_container_width=True):
-    store.pop(workspace_id, None)
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.query_params.clear()
-    st.rerun()
-st.caption("分享给别人时，只发送 .streamlit.app 主网址，不要复制包含 ?workspace= 的当前工作区网址。工作区闲置 6 小时后自动清理。")
+with st.sidebar:
+    st.markdown("## 定价工作台")
+    st.caption("产品运营工具")
+    navigation = st.radio(
+        "功能导航",
+        ["产品包改价", "价格表管理", "使用说明"],
+        label_visibility="collapsed",
+    )
+    st.markdown("---")
+    st.caption("独立工作区")
+    st.code(workspace_id[:8].upper(), language=None)
+    st.caption("文件闲置6小时后自动清理")
+    if st.button("新建空白工作区", use_container_width=True):
+        store.pop(workspace_id, None)
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.query_params.clear()
+        st.rerun()
+    st.caption("分享时只发送不带 ?workspace= 的应用主网址")
 
-st.markdown('<div class="section-kicker">Product Import</div><div class="section-title">选择产品包入口</div>', unsafe_allow_html=True)
-format_label = st.radio(
-    "产品包格式",
-    ["入口一 · 供应商原格式", "入口二 · Shopify 格式"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-file_format = SHOPIFY if "Shopify" in format_label else SUPPLIER
-format_help = (
-    "上传 Shopify 导出的 CSV；处理后仍按 Shopify 原列结构导出。"
-    if file_format == SHOPIFY
-    else "上传当前使用的供应商产品包；处理后保留原始列结构。"
-)
-st.caption(format_help)
-new_uploads = st.file_uploader(
-    "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
-    type=["csv"],
-    accept_multiple_files=True,
-    label_visibility="collapsed",
-    key=f"product_csv_uploader_{file_format}",
-)
+if navigation == "使用说明":
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Guide</div><h2>使用说明</h2></div><p>三个步骤完成产品包改价</p></div>', unsafe_allow_html=True)
+    guide_cols = st.columns(3)
+    guide_cols[0].info("**1. 选择格式并上传**\n\n供应商文件选择供应商入口，Shopify导出文件选择Shopify入口。支持一次上传多个CSV。")
+    guide_cols[1].info("**2. 检查结果**\n\n确认识别品类。无法识别的商品保持原价，也可以手动指定正确品类后重新处理。")
+    guide_cols[2].info("**3. 下载文件**\n\n单独下载CSV，或下载批量ZIP。ZIP必须先解压，再把CSV上传到店铺后台。")
+    st.warning("分享给别人时，只发送不带 ?workspace= 参数的应用主网址。")
+    st.stop()
+
+if navigation == "价格表管理":
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Price Rules</div><h2>价格表管理</h2></div><p>修改后同时应用于两种产品包格式</p></div>', unsafe_allow_html=True)
+    file_format = SUPPLIER
+    new_uploads = None
+else:
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Product Import</div><h2>产品包改价</h2></div><p>支持批量处理，无法识别的商品保持原价</p></div>', unsafe_allow_html=True)
+    format_label = st.radio(
+        "产品包格式",
+        ["供应商原格式", "Shopify 格式"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    file_format = SHOPIFY if "Shopify" in format_label else SUPPLIER
+    format_help = (
+        "Shopify CSV：保留 Shopify 原始列结构，只修改 Variant Price 与 Variant Compare At Price。"
+        if file_format == SHOPIFY
+        else "供应商 CSV：保留原始27列结构，只修改 price 与 compare_at_price。"
+    )
+    st.markdown(f'<div class="format-note">{format_help}</div>', unsafe_allow_html=True)
+    new_uploads = st.file_uploader(
+        "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
+        type=["csv"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key=f"product_csv_uploader_{file_format}",
+    )
 
 if "price_range_overrides" not in st.session_state:
     st.session_state.price_range_overrides = dict(workspace.get("price_ranges", {}))
 if "price_editor_version" not in st.session_state:
     st.session_state.price_editor_version = 0
 
-with st.expander("价格范围管理 · 修改、导入或保存价格表", expanded=False):
+with st.expander(
+    "编辑全部价格范围" if navigation == "价格表管理" else "快速修改价格范围",
+    expanded=navigation == "价格表管理",
+):
     st.caption("修改后点击保存。这里只改变价格区间，不改变品类名称；新范围会立即用于供应商和 Shopify 两个入口。")
     range_rows = []
     for rule in CATEGORY_RULES:
@@ -260,6 +294,9 @@ with st.expander("价格范围管理 · 修改、导入或保存价格表", expa
         except Exception:
             st.error("自定义价格表无法读取，或存在无效价格范围。")
 
+if navigation == "价格表管理":
+    st.stop()
+
 if new_uploads:
     workspace["files"][file_format] = [
         {"name": item.name, "data": item.getvalue()} for item in new_uploads
@@ -337,6 +374,23 @@ for file_index, uploaded in enumerate(uploaded_files):
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
             )
+
+            priced_count = len(pricing_result.product_summary)
+            unchanged_count = len(pricing_result.unresolved_handles)
+            discounted_count = (
+                int((pricing_result.product_summary["新划线价"] > 0).sum())
+                if not pricing_result.product_summary.empty else 0
+            )
+            outcome = st.columns(4)
+            outcome[0].metric("已完成改价", priced_count)
+            outcome[1].metric("保持原价", unchanged_count)
+            outcome[2].metric("打折商品", discounted_count)
+            outcome[3].metric("处理状态", "需要确认" if unchanged_count else "全部完成")
+            if not unchanged_count:
+                st.markdown(
+                    f'<div class="status-strip">已完成：{priced_count} 个商品全部识别并完成定价。</div>',
+                    unsafe_allow_html=True,
+                )
 
             # Manual correction is always available, even when automatic
             # classification succeeded. Mappings are stored by supplier category.
@@ -470,7 +524,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 similar = pricing_result.product_summary.copy()
 
             similar_confirmed = True
-            result_tab, changes_tab = st.tabs(["定价结果", "SKU 变更"])
+            result_tab, changes_tab = st.tabs(["定价结果", "价格明细"])
             with result_tab:
                 if not pricing_result.product_summary.empty:
                     visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"])
@@ -522,6 +576,11 @@ for file_index, uploaded in enumerate(uploaded_files):
                     )
                 else:
                     st.success("此产品包已完成并通过校验。")
+                st.markdown(
+                    '<div class="download-panel"><h3>产品包可以下载</h3>'
+                    '<p>文件结构和非价格字段保持不变。未识别商品会保留原价格。</p></div>',
+                    unsafe_allow_html=True,
+                )
                 st.download_button(
                     f"下载 {output_name}",
                     data=output_bytes,
