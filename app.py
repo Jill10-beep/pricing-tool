@@ -532,29 +532,39 @@ for file_index, uploaded in enumerate(uploaded_files):
             with result_tab:
                 if not pricing_result.product_summary.empty:
                     visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"]).reset_index(drop=True)
-                    st.caption("发现个别商品品类不对？直接点击表格中的那一行，然后在表格下方单独纠正。")
+                    st.caption("品类不对？直接点击表格中的一行或多行，再在表格下方批量纠正。按住 Ctrl 可连续选择多行。")
                     selection_event = st.dataframe(
                         visible,
                         use_container_width=True,
                         hide_index=True,
                         height=330,
                         on_select="rerun",
-                        selection_mode="single-row",
+                        selection_mode="multi-row",
                         key=f"pricing_table_{file_index}",
                     )
                     selected_rows = getattr(getattr(selection_event, "selection", None), "rows", [])
                     if selected_rows:
-                        selected = visible.iloc[int(selected_rows[0])]
-                        selected_handle = str(selected["Handle"])
-                        selected_token = hashlib.sha256(selected_handle.encode("utf-8")).hexdigest()[:10]
-                        st.markdown(f"#### 单独纠正商品：{selected_handle}")
+                        selected_items = visible.iloc[[int(index) for index in selected_rows]].copy()
+                        selected_handles = selected_items["Handle"].astype(str).tolist()
+                        selected_token = hashlib.sha256(
+                            "|".join(sorted(selected_handles)).encode("utf-8")
+                        ).hexdigest()[:10]
+                        st.markdown(f"#### 批量纠正已选中的 {len(selected_handles)} 个商品")
+                        st.dataframe(
+                            selected_items[["Handle", "原始分类", "一级品类", "识别品类", "价格区间"]],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(250, 72 + len(selected_items) * 35),
+                        )
+                        selected_primaries = selected_items["一级品类"].astype(str).unique().tolist()
+                        selected_categories = selected_items["识别品类"].astype(str).unique().tolist()
                         correction_info = st.columns(3)
-                        correction_info[0].metric("当前一级品类", str(selected["一级品类"]))
-                        correction_info[1].metric("当前具体品类", str(selected["识别品类"]))
-                        correction_info[2].metric("当前价格区间", str(selected["价格区间"]))
+                        correction_info[0].metric("已选择商品", len(selected_handles))
+                        correction_info[1].metric("当前一级品类数", len(selected_primaries))
+                        correction_info[2].metric("当前具体品类数", len(selected_categories))
 
                         primary_options = list(PRIMARY_CATEGORIES)
-                        current_primary = str(selected["一级品类"])
+                        current_primary = selected_primaries[0]
                         primary_index = primary_options.index(current_primary) if current_primary in primary_options else 0
                         corrected_primary = st.selectbox(
                             "选择正确的一级品类",
@@ -570,7 +580,10 @@ for file_index, uploaded in enumerate(uploaded_files):
                             maximum = float(custom_range.get("maximum", rule.maximum))
                             corrected_labels.append(f"{rule.name}（${minimum:.2f}–${maximum:.2f}）")
                         current_rule_index = next(
-                            (index for index, rule in enumerate(corrected_rules) if rule.name == str(selected["识别品类"])),
+                            (
+                                index for index, rule in enumerate(corrected_rules)
+                                if len(selected_categories) == 1 and rule.name == selected_categories[0]
+                            ),
                             0,
                         )
                         corrected_label = st.selectbox(
@@ -581,22 +594,24 @@ for file_index, uploaded in enumerate(uploaded_files):
                         )
                         correction_actions = st.columns(2)
                         if correction_actions[0].button(
-                            "保存这一个商品并重新定价",
+                            f"保存并重新定价这 {len(selected_handles)} 个商品",
                             key=f"save_single_{file_index}_{selected_token}",
                             use_container_width=True,
                         ):
                             selected_rule = corrected_rules[corrected_labels.index(corrected_label)]
-                            st.session_state.product_category_mappings[selected_handle] = selected_rule.rule_id
+                            for selected_handle in selected_handles:
+                                st.session_state.product_category_mappings[selected_handle] = selected_rule.rule_id
                             workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
                             workspace["updated"] = time.time()
                             st.rerun()
-                        if selected_handle in st.session_state.product_category_mappings:
+                        if any(handle in st.session_state.product_category_mappings for handle in selected_handles):
                             if correction_actions[1].button(
-                                "恢复整组品类规则",
+                                "恢复所选商品的整组品类规则",
                                 key=f"reset_single_{file_index}_{selected_token}",
                                 use_container_width=True,
                             ):
-                                st.session_state.product_category_mappings.pop(selected_handle, None)
+                                for selected_handle in selected_handles:
+                                    st.session_state.product_category_mappings.pop(selected_handle, None)
                                 workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
                                 workspace["updated"] = time.time()
                                 st.rerun()

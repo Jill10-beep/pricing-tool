@@ -30,6 +30,7 @@ Women's Clothing|Blouses|24.99|34.99
 Women's Clothing|Sweaters|34.99|44.99
 Women's Clothing|Hoodies|34.99|44.99
 Women's Clothing|Sweatshirts|34.99|44.99
+Women's Clothing|Cardigans|34.99|44.99
 Women's Clothing|Jeans|34.99|44.99
 Women's Clothing|Pants|32.99|44.99
 Women's Clothing|Leggings|19.99|29.99
@@ -195,6 +196,7 @@ Automotive, Outdoor and Office|Stationery Supplies|7.99|24.99
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "Women's Clothing::Sets": ("women's, sets", "women's set", "womens set", "women tracksuit", "jogger set", "two piece set", "女套装", "女运动套装"),
+    "Women's Clothing::Cardigans": ("cardigan", "cardigans", "cardi", "button front cardigan", "open front cardigan", "女开衫", "针织开衫"),
     "Men's Clothing::Underwear": ("boxer brief", "boxer briefs", "men underwear", "men's underwear", "briefs", "trunks", "男士内裤"),
     "Underwear, Sleepwear and Swimwear::Panties (Multipacks)": ("panties", "panty", "women's panties", "womens panties", "女士内裤"),
     "Underwear, Sleepwear and Swimwear::Bras": ("bra", "bras", "bralette", "bralettes", "sports bra", "wireless bra", "文胸", "胸罩", "内衣上装"),
