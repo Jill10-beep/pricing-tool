@@ -109,6 +109,7 @@ st.markdown(
     div[data-testid="stMetric"] { background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:16px; padding:17px 18px; box-shadow:0 8px 22px rgba(21,21,26,.04); }
     div[data-testid="stMetricLabel"] { color:var(--muted); }
     div[data-testid="stMetricValue"] { color:var(--ink); font-size:27px; }
+    div[data-testid="stProgress"] > div > div > div { background:linear-gradient(90deg,var(--violet),var(--cyan),var(--lime)); }
     div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:15px; overflow:hidden; background:#FFF; }
     div[data-testid="stAlert"] { border-radius:12px; border-width:1px; }
     div[data-testid="stExpander"] { background:rgba(255,255,255,.82); border:1px solid var(--line); border-radius:15px; }
@@ -120,6 +121,11 @@ st.markdown(
     section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) { background:var(--lime); border-color:var(--lime); }
     section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) * { color:#15151A; }
     div[data-testid="stRadio"] > div[role="radiogroup"] { gap:12px; }
+    main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) { margin:-4px 0 25px; }
+    main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) > div[role="radiogroup"] { background:rgba(255,255,255,.72); border:1px solid var(--line); border-radius:16px; padding:5px; gap:5px; width:fit-content; box-shadow:0 8px 22px rgba(21,21,26,.035); }
+    main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label { min-width:190px; justify-content:center; border:0; border-radius:11px; padding:11px 18px; box-shadow:none; background:transparent; }
+    main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) { background:#15151A; }
+    main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) * { color:#FFF; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:16px; padding:16px 20px; min-width:260px; box-shadow:0 8px 22px rgba(21,21,26,.035); transition:.2s; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label:hover { transform:translateY(-2px); border-color:var(--violet); }
     .stButton>button, .stDownloadButton>button { border-radius:12px; min-height:46px; font-weight:700; transition:transform .18s ease,box-shadow .18s ease; }
@@ -204,11 +210,6 @@ def _undo_last_change() -> str | None:
 with st.sidebar:
     st.markdown("## MORYVORO")
     st.caption("产品定价处理中心")
-    navigation = st.radio(
-        "功能导航",
-        ["产品包改价", "价格表管理", "使用说明"],
-        label_visibility="collapsed",
-    )
     st.markdown("---")
     st.caption("独立工作区")
     st.code(workspace_id[:8].upper(), language=None)
@@ -233,6 +234,14 @@ with st.sidebar:
         st.rerun()
     st.caption("分享时只发送不带 ?workspace= 的应用主网址")
 
+navigation = st.radio(
+    "功能导航",
+    ["定价处理中心", "品类与价格规则", "使用说明"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_navigation",
+)
+
 if navigation == "使用说明":
     st.markdown('<div class="page-head"><div><div class="section-kicker">Guide</div><h2>使用说明</h2></div><p>三个步骤完成产品包改价</p></div>', unsafe_allow_html=True)
     guide_cols = st.columns(3)
@@ -242,12 +251,26 @@ if navigation == "使用说明":
     st.warning("分享给别人时，只发送不带 ?workspace= 参数的应用主网址。")
     st.stop()
 
-if navigation == "价格表管理":
-    st.markdown('<div class="page-head"><div><div class="section-kicker">Price Rules</div><h2>价格表管理</h2></div><p>修改后同时应用于两种产品包格式</p></div>', unsafe_allow_html=True)
+if navigation == "品类与价格规则":
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Category & Pricing Rules</div><h2>品类与价格规则</h2></div><p>维护品类关系和价格范围，修改后同时应用于两种产品包格式</p></div>', unsafe_allow_html=True)
+    rule_overview = st.columns(3)
+    rule_overview[0].metric("一级品类", len(PRIMARY_CATEGORIES))
+    rule_overview[1].metric("具体品类规则", len(CATEGORY_RULES))
+    rule_overview[2].metric("自定义价格范围", len(st.session_state.price_range_overrides))
+    relationship_primary = st.selectbox(
+        "查看品类关系",
+        list(PRIMARY_CATEGORIES),
+        key="relationship_primary",
+    )
+    relationship_rules = rules_for_primary(relationship_primary)
+    st.caption(
+        f"{relationship_primary} 下包含 {len(relationship_rules)} 个具体品类："
+        + "、".join(rule.name for rule in relationship_rules)
+    )
     file_format = SUPPLIER
     new_uploads = None
 else:
-    st.markdown('<div class="page-head"><div><div class="section-kicker">Product Import</div><h2>产品包改价</h2></div><p>支持批量处理，无法识别的商品保持原价</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>定价处理中心</h2></div><p>上传、识别、校正和导出集中在同一处理流程</p></div>', unsafe_allow_html=True)
     format_label = st.radio(
         "产品包格式",
         ["供应商原格式", "Shopify 格式"],
@@ -270,8 +293,8 @@ else:
     )
 
 with st.expander(
-    "编辑全部价格范围" if navigation == "价格表管理" else "快速修改价格范围",
-    expanded=navigation == "价格表管理",
+    "编辑全部价格范围" if navigation == "品类与价格规则" else "快速修改价格范围",
+    expanded=navigation == "品类与价格规则",
 ):
     st.caption("修改后点击保存。这里只改变价格区间，不改变品类名称；新范围会立即用于供应商和 Shopify 两个入口。")
     range_rows = []
@@ -362,7 +385,7 @@ with st.expander(
         except Exception:
             st.error("自定义价格表无法读取，或存在无效价格范围。")
 
-if navigation == "价格表管理":
+if navigation == "品类与价格规则":
     st.stop()
 
 if new_uploads:
@@ -458,6 +481,15 @@ for file_index, uploaded in enumerate(uploaded_files):
             outcome[1].metric("保持原价", unchanged_count)
             outcome[2].metric("打折商品", discounted_count)
             outcome[3].metric("处理状态", "需要确认" if unchanged_count else "全部完成")
+            recognition_rate = (
+                priced_count / pricing_result.expected_products
+                if pricing_result.expected_products else 1.0
+            )
+            st.progress(
+                min(max(recognition_rate, 0.0), 1.0),
+                text=f"自动识别完成度 {recognition_rate * 100:.1f}% · "
+                f"{priced_count} 个已定价，{unchanged_count} 个等待确认",
+            )
             if not unchanged_count:
                 st.markdown(
                     f'<div class="status-strip">已完成：{priced_count} 个商品全部识别并完成定价。</div>',
