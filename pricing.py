@@ -162,6 +162,7 @@ def apply_fixed_pricing(
     frame: pd.DataFrame,
     category_overrides: dict[str, str] | None = None,
     price_range_overrides: dict[str, dict[str, float]] | None = None,
+    product_category_overrides: dict[str, str] | None = None,
 ) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
@@ -170,6 +171,7 @@ def apply_fixed_pricing(
 
     overrides = category_overrides or {}
     range_overrides = price_range_overrides or {}
+    product_overrides = product_category_overrides or {}
     category_decisions = _category_level_decisions(output, overrides)
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
@@ -191,8 +193,14 @@ def apply_fixed_pricing(
         title = next((value for value in titles if value), "")
         structured_text = f"{source_category} {title}"
         category_decision = category_decisions.get(source_category)
-        override_rule = category_decision[0] if category_decision and category_decision[2] else None
-        if category_decision:
+        product_override_rule = resolve_rule(product_overrides.get(handle_text, ""))
+        override_rule = product_override_rule or (
+            category_decision[0] if category_decision and category_decision[2] else None
+        )
+        if product_override_rule:
+            rule = product_override_rule
+            match_method = f"单个商品人工纠正：{product_override_rule.primary} → {product_override_rule.name}"
+        elif category_decision:
             rule, match_method, _ = category_decision
         else:
             # Only products without a supplier category may fall back to their

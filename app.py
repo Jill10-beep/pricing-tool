@@ -137,6 +137,7 @@ workspace = store.setdefault(
     {
         "files": {SUPPLIER: [], SHOPIFY: []},
         "mappings": {},
+        "product_mappings": {},
         "price_ranges": {},
         "updated": time.time(),
     },
@@ -307,6 +308,8 @@ uploaded_files = list(workspace["files"].get(file_format, []))
 
 if "learned_category_mappings" not in st.session_state:
     st.session_state.learned_category_mappings = dict(workspace.get("mappings", {}))
+if "product_category_mappings" not in st.session_state:
+    st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
 
 if uploaded_files:
     st.success(f"当前批次已保留 {len(uploaded_files)} 个产品包。普通页面刷新不会丢失；应用重启或重新部署后需重新上传。")
@@ -373,6 +376,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 source,
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
+                st.session_state.product_category_mappings,
             )
 
             priced_count = len(pricing_result.product_summary)
@@ -527,8 +531,75 @@ for file_index, uploaded in enumerate(uploaded_files):
             result_tab, changes_tab = st.tabs(["定价结果", "价格明细"])
             with result_tab:
                 if not pricing_result.product_summary.empty:
-                    visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"])
-                    st.dataframe(visible, use_container_width=True, hide_index=True, height=330)
+                    visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"]).reset_index(drop=True)
+                    st.caption("发现个别商品品类不对？直接点击表格中的那一行，然后在表格下方单独纠正。")
+                    selection_event = st.dataframe(
+                        visible,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=330,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                        key=f"pricing_table_{file_index}",
+                    )
+                    selected_rows = getattr(getattr(selection_event, "selection", None), "rows", [])
+                    if selected_rows:
+                        selected = visible.iloc[int(selected_rows[0])]
+                        selected_handle = str(selected["Handle"])
+                        selected_token = hashlib.sha256(selected_handle.encode("utf-8")).hexdigest()[:10]
+                        st.markdown(f"#### 单独纠正商品：{selected_handle}")
+                        correction_info = st.columns(3)
+                        correction_info[0].metric("当前一级品类", str(selected["一级品类"]))
+                        correction_info[1].metric("当前具体品类", str(selected["识别品类"]))
+                        correction_info[2].metric("当前价格区间", str(selected["价格区间"]))
+
+                        primary_options = list(PRIMARY_CATEGORIES)
+                        current_primary = str(selected["一级品类"])
+                        primary_index = primary_options.index(current_primary) if current_primary in primary_options else 0
+                        corrected_primary = st.selectbox(
+                            "选择正确的一级品类",
+                            primary_options,
+                            index=primary_index,
+                            key=f"single_primary_{file_index}_{selected_token}",
+                        )
+                        corrected_rules = rules_for_primary(corrected_primary)
+                        corrected_labels = []
+                        for rule in corrected_rules:
+                            custom_range = st.session_state.price_range_overrides.get(rule.rule_id, {})
+                            minimum = float(custom_range.get("minimum", rule.minimum))
+                            maximum = float(custom_range.get("maximum", rule.maximum))
+                            corrected_labels.append(f"{rule.name}（${minimum:.2f}–${maximum:.2f}）")
+                        current_rule_index = next(
+                            (index for index, rule in enumerate(corrected_rules) if rule.name == str(selected["识别品类"])),
+                            0,
+                        )
+                        corrected_label = st.selectbox(
+                            "选择正确的具体品类",
+                            corrected_labels,
+                            index=current_rule_index,
+                            key=f"single_rule_{file_index}_{selected_token}_{corrected_primary}",
+                        )
+                        correction_actions = st.columns(2)
+                        if correction_actions[0].button(
+                            "保存这一个商品并重新定价",
+                            key=f"save_single_{file_index}_{selected_token}",
+                            use_container_width=True,
+                        ):
+                            selected_rule = corrected_rules[corrected_labels.index(corrected_label)]
+                            st.session_state.product_category_mappings[selected_handle] = selected_rule.rule_id
+                            workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
+                            workspace["updated"] = time.time()
+                            st.rerun()
+                        if selected_handle in st.session_state.product_category_mappings:
+                            if correction_actions[1].button(
+                                "恢复整组品类规则",
+                                key=f"reset_single_{file_index}_{selected_token}",
+                                use_container_width=True,
+                            ):
+                                st.session_state.product_category_mappings.pop(selected_handle, None)
+                                workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
+                                workspace["updated"] = time.time()
+                                st.rerun()
                 if not similar.empty:
                     st.warning("请确认相似品类映射。")
                     st.dataframe(similar[["Handle", "匹配方式", "一级品类", "识别品类", "价格区间"]], use_container_width=True, hide_index=True, height=210)
