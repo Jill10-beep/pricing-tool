@@ -59,68 +59,86 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
-    :root { --ink:#152238; --muted:#64748B; --line:#E7EAF0; --gold:#B58A4B; --paper:#F7F8FA; }
-    .stApp { background: #F7F8FA; color: var(--ink); }
-    .block-container { max-width: 1480px; padding-top: 1.6rem; padding-bottom: 5rem; }
+    :root { --ink:#15151A; --muted:#6E6B78; --line:#DED9D0; --violet:#795CFF; --lime:#C9FF45; --coral:#FF6B55; --cyan:#47DCE0; --paper:#F6F3EC; --surface:#FFFFFF; }
+    .stApp {
+        background:
+          radial-gradient(circle at 92% 4%, rgba(121,92,255,.13), transparent 23rem),
+          radial-gradient(circle at 10% 95%, rgba(71,220,224,.10), transparent 28rem),
+          var(--paper);
+        color: var(--ink);
+    }
+    .block-container { max-width: 1480px; padding-top: 1.2rem; padding-bottom: 5rem; }
     html, body, [class*="css"] { font-family: "DM Sans", "Noto Sans SC", sans-serif; }
     #MainMenu, footer, header { visibility: hidden; }
 
     .hero {
-        position: relative; overflow: hidden; padding: 34px 40px; border-radius: 20px;
-        background: linear-gradient(125deg, #101B2D 0%, #1A2941 68%, #263B5B 100%);
-        box-shadow: 0 18px 55px rgba(15, 29, 50, .16); margin-bottom: 22px;
+        position: relative; overflow: hidden; padding: 38px 42px; border-radius: 24px;
+        background: #15151A; box-shadow: 0 22px 65px rgba(21,21,26,.18); margin-bottom: 18px;
     }
-    .hero:after { content:""; position:absolute; width:320px; height:320px; right:-90px; top:-160px;
-        border:1px solid rgba(201,166,109,.35); border-radius:50%; box-shadow:0 0 0 55px rgba(201,166,109,.06); }
-    .eyebrow { color:#D8B77E; font-size:12px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; }
-    .hero h1 { color:#FFF; font-size:34px; line-height:1.15; margin:9px 0 10px; letter-spacing:-.02em; }
-    .hero p { color:#BFC9D8; max-width:720px; margin:0; font-size:15px; line-height:1.8; }
-    .stepbar { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 26px; }
-    .step { background:#FFF; border:1px solid var(--line); border-radius:12px; padding:13px 16px; color:#697386; font-size:13px; }
-    .step b { color:var(--gold); margin-right:8px; }
-    .section-kicker { color:var(--gold); font-weight:700; font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin-top:8px; }
+    .hero:before { content:""; position:absolute; width:270px; height:270px; right:8%; top:-170px; background:var(--violet); border-radius:50%; filter:blur(3px); opacity:.65; }
+    .hero:after { content:""; position:absolute; width:180px; height:180px; right:-45px; bottom:-105px; background:var(--lime); border-radius:48% 52% 58% 42%; transform:rotate(24deg); }
+    .brandline { position:relative; z-index:1; display:flex; align-items:center; gap:10px; color:#FFF; font-weight:700; font-size:13px; letter-spacing:.08em; }
+    .brandmark { display:inline-grid; place-items:center; width:34px; height:34px; border-radius:11px; background:var(--lime); color:#15151A; font-weight:700; transform:rotate(-7deg); letter-spacing:-.05em; }
+    .eyebrow { position:relative; z-index:1; color:var(--cyan); font-size:11px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; margin-top:30px; }
+    .hero h1 { position:relative; z-index:1; color:#FFF; font-size:39px; line-height:1.08; margin:8px 0 11px; letter-spacing:-.045em; }
+    .hero p { position:relative; z-index:1; color:#B9B7C4; max-width:760px; margin:0; font-size:15px; line-height:1.75; }
+    .stepbar { display:grid; grid-template-columns:repeat(4,1fr); gap:11px; margin:16px 0 27px; }
+    .step { position:relative; overflow:hidden; background:rgba(255,255,255,.82); border:1px solid var(--line); border-radius:16px; padding:17px 18px; color:var(--muted); font-size:12px; transition:transform .2s ease,box-shadow .2s ease; }
+    .step:hover { transform:translateY(-3px); box-shadow:0 14px 34px rgba(21,21,26,.08); }
+    .step strong { display:block; color:var(--ink); font-size:15px; margin:8px 0 3px; }
+    .step b { display:inline-grid; place-items:center; width:25px; height:25px; border-radius:8px; background:var(--step-color); color:#15151A; }
+    .step:nth-child(1){--step-color:var(--cyan)} .step:nth-child(2){--step-color:#BBAEFF} .step:nth-child(3){--step-color:#FF9889} .step:nth-child(4){--step-color:var(--lime)}
+    .section-kicker { color:var(--violet); font-weight:700; font-size:11px; letter-spacing:.15em; text-transform:uppercase; margin-top:8px; }
     .section-title { color:var(--ink); font-size:23px; font-weight:700; margin:2px 0 14px; }
     .empty-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:18px; }
-    .empty-card { background:#FFF; border:1px solid var(--line); padding:22px; border-radius:15px; }
+    .empty-card { background:rgba(255,255,255,.82); border:1px solid var(--line); padding:22px; border-radius:17px; transition:.2s; }
+    .empty-card:hover { transform:translateY(-3px); box-shadow:0 14px 34px rgba(21,21,26,.07); }
     .empty-card strong { display:block; color:var(--ink); margin-bottom:7px; }
     .empty-card span { color:var(--muted); font-size:13px; line-height:1.6; }
-    .download-panel { background:linear-gradient(120deg,#F1E8D9,#FAF7F1); border:1px solid #E4D2B5; border-radius:16px; padding:22px 24px; margin-top:18px; }
-    .download-panel h3 { color:#4B3820; margin:0 0 5px; font-size:20px; }
-    .download-panel p { color:#806A4C; margin:0; font-size:13px; }
+    .download-panel { background:linear-gradient(120deg,rgba(201,255,69,.34),rgba(255,255,255,.88)); border:1px solid #B6D85D; border-radius:18px; padding:22px 24px; margin-top:18px; }
+    .download-panel h3 { color:var(--ink); margin:0 0 5px; font-size:20px; }
+    .download-panel p { color:var(--muted); margin:0; font-size:13px; }
     .page-head { display:flex; align-items:end; justify-content:space-between; gap:18px; margin:8px 0 18px; }
     .page-head h2 { margin:3px 0 0; color:var(--ink); font-size:26px; }
     .page-head p { margin:0; color:var(--muted); font-size:14px; }
-    .format-note { background:#FFF; border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin:8px 0 14px; color:var(--muted); }
-    .status-strip { background:#F0F7F3; border:1px solid #CFE6D7; border-radius:13px; padding:14px 17px; color:#245C39; font-weight:600; margin:12px 0; }
+    .format-note { background:rgba(255,255,255,.82); border:1px solid var(--line); border-left:4px solid var(--cyan); border-radius:14px; padding:16px 18px; margin:8px 0 14px; color:var(--muted); }
+    .status-strip { background:rgba(201,255,69,.20); border:1px solid #B9D96B; border-radius:14px; padding:14px 17px; color:#34500A; font-weight:600; margin:12px 0; }
 
-    div[data-testid="stFileUploader"] { background:#FFF; border:1px solid var(--line); border-radius:16px; padding:13px 18px 5px; }
-    div[data-testid="stFileUploaderDropzone"] { border:1px dashed #BAC3D1; background:#FAFBFC; border-radius:12px; }
-    div[data-testid="stMetric"] { background:#FFF; border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 5px 16px rgba(23,34,56,.035); }
+    div[data-testid="stFileUploader"] { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:13px 18px 5px; }
+    div[data-testid="stFileUploaderDropzone"] { border:1px dashed var(--violet); background:rgba(121,92,255,.035); border-radius:14px; }
+    div[data-testid="stMetric"] { background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:16px; padding:17px 18px; box-shadow:0 8px 22px rgba(21,21,26,.04); }
     div[data-testid="stMetricLabel"] { color:var(--muted); }
     div[data-testid="stMetricValue"] { color:var(--ink); font-size:27px; }
-    div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:13px; overflow:hidden; background:#FFF; }
+    div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:15px; overflow:hidden; background:#FFF; }
     div[data-testid="stAlert"] { border-radius:12px; border-width:1px; }
-    div[data-testid="stExpander"] { background:#FFF; border:1px solid var(--line); border-radius:13px; }
+    div[data-testid="stExpander"] { background:rgba(255,255,255,.82); border:1px solid var(--line); border-radius:15px; }
     div[data-testid="stTabs"] button { font-weight:600; }
-    section[data-testid="stSidebar"] { background:#111D30; border-right:0; }
-    section[data-testid="stSidebar"] * { color:#E8EEF7; }
-    section[data-testid="stSidebar"] div[role="radiogroup"] label { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:10px; padding:10px 12px; margin-bottom:6px; }
+    section[data-testid="stSidebar"] { background:#15151A; border-right:0; }
+    section[data-testid="stSidebar"] * { color:#F7F5FF; }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label { background:rgba(255,255,255,.055); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:11px 12px; margin-bottom:7px; transition:.2s; }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover { background:rgba(201,255,69,.12); transform:translateX(3px); }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) { background:var(--lime); border-color:var(--lime); }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) * { color:#15151A; }
     div[data-testid="stRadio"] > div[role="radiogroup"] { gap:12px; }
-    main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:#FFF; border:1px solid var(--line); border-radius:14px; padding:16px 20px; min-width:260px; box-shadow:0 5px 16px rgba(23,34,56,.035); }
-    .stButton>button, .stDownloadButton>button { border-radius:10px; min-height:46px; font-weight:700; }
-    .stDownloadButton>button { background:#17253B; color:#FFF; border:1px solid #17253B; }
-    .stDownloadButton>button:hover { background:#223653; color:#FFF; border-color:#223653; }
-    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:30px}.stepbar,.empty-grid{grid-template-columns:1fr 1fr} }
+    main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:16px; padding:16px 20px; min-width:260px; box-shadow:0 8px 22px rgba(21,21,26,.035); transition:.2s; }
+    main div[data-testid="stRadio"] > div[role="radiogroup"] label:hover { transform:translateY(-2px); border-color:var(--violet); }
+    .stButton>button, .stDownloadButton>button { border-radius:12px; min-height:46px; font-weight:700; transition:transform .18s ease,box-shadow .18s ease; }
+    .stButton>button:hover, .stDownloadButton>button:hover { transform:translateY(-2px); box-shadow:0 10px 25px rgba(21,21,26,.12); }
+    .stButton>button[kind="primary"], .stDownloadButton>button { background:#15151A; color:#FFF; border:1px solid #15151A; }
+    .stButton>button[kind="primary"]:hover, .stDownloadButton>button:hover { background:var(--violet); color:#FFF; border-color:var(--violet); }
+    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} }
     </style>
     <div class="hero">
+      <div class="brandline"><span class="brandmark">MP</span>MORYVORO PRICING</div>
       <div class="eyebrow">Pricing Workspace</div>
-      <h1>产品自动定价工具</h1>
-      <p>上传产品包，系统自动识别商品结构与相似品类，执行固定价格及折扣规则，并生成可直接使用的新产品包。</p>
+      <h1>产品包批量定价与结果校验</h1>
+      <p>系统自动完成品类识别、价格计算和异常检查，并在不改变原始文件结构的前提下生成可直接使用的新产品包。</p>
     </div>
     <div class="stepbar">
-      <div class="step"><b>01</b>选择格式并上传</div>
-      <div class="step"><b>02</b>检查品类与价格</div>
-      <div class="step"><b>03</b>下载产品包</div>
+      <div class="step"><b>01</b><strong>上传产品包</strong>选择普通或 Shopify 格式</div>
+      <div class="step"><b>02</b><strong>识别商品品类</strong>自动匹配相似品类与价格</div>
+      <div class="step"><b>03</b><strong>复核异常商品</strong>批量校正低置信度结果</div>
+      <div class="step"><b>04</b><strong>导出处理结果</strong>保留结构并更新价格字段</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -139,14 +157,53 @@ workspace = store.setdefault(
         "mappings": {},
         "product_mappings": {},
         "price_ranges": {},
+        "history": [],
         "updated": time.time(),
     },
 )
 workspace["updated"] = time.time()
 
+if "price_range_overrides" not in st.session_state:
+    st.session_state.price_range_overrides = dict(workspace.get("price_ranges", {}))
+if "price_editor_version" not in st.session_state:
+    st.session_state.price_editor_version = 0
+if "learned_category_mappings" not in st.session_state:
+    st.session_state.learned_category_mappings = dict(workspace.get("mappings", {}))
+if "product_category_mappings" not in st.session_state:
+    st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
+
+
+def _record_change(label: str) -> None:
+    """Save one reversible snapshot before changing pricing configuration."""
+    history = workspace.setdefault("history", [])
+    history.append({
+        "label": label,
+        "time": time.strftime("%H:%M:%S"),
+        "mappings": dict(st.session_state.learned_category_mappings),
+        "product_mappings": dict(st.session_state.product_category_mappings),
+        "price_ranges": dict(st.session_state.price_range_overrides),
+    })
+    del history[:-20]
+
+
+def _undo_last_change() -> str | None:
+    history = workspace.setdefault("history", [])
+    if not history:
+        return None
+    snapshot = history.pop()
+    st.session_state.learned_category_mappings = dict(snapshot["mappings"])
+    st.session_state.product_category_mappings = dict(snapshot["product_mappings"])
+    st.session_state.price_range_overrides = dict(snapshot["price_ranges"])
+    st.session_state.price_editor_version += 1
+    workspace["mappings"] = dict(snapshot["mappings"])
+    workspace["product_mappings"] = dict(snapshot["product_mappings"])
+    workspace["price_ranges"] = dict(snapshot["price_ranges"])
+    workspace["updated"] = time.time()
+    return str(snapshot["label"])
+
 with st.sidebar:
-    st.markdown("## 定价工作台")
-    st.caption("产品运营工具")
+    st.markdown("## MORYVORO")
+    st.caption("产品定价处理中心")
     navigation = st.radio(
         "功能导航",
         ["产品包改价", "价格表管理", "使用说明"],
@@ -156,6 +213,18 @@ with st.sidebar:
     st.caption("独立工作区")
     st.code(workspace_id[:8].upper(), language=None)
     st.caption("文件闲置6小时后自动清理")
+    history = workspace.setdefault("history", [])
+    with st.expander(f"修改记录 · {len(history)}"):
+        if history:
+            for item in reversed(history[-6:]):
+                st.caption(f"{item['time']} · {item['label']}")
+            if st.button("撤销上一次修改", use_container_width=True):
+                undone = _undo_last_change()
+                if undone:
+                    st.toast(f"已撤销：{undone}")
+                    st.rerun()
+        else:
+            st.caption("尚无可撤销的修改")
     if st.button("新建空白工作区", use_container_width=True):
         store.pop(workspace_id, None)
         for key in list(st.session_state.keys()):
@@ -199,11 +268,6 @@ else:
         label_visibility="collapsed",
         key=f"product_csv_uploader_{file_format}",
     )
-
-if "price_range_overrides" not in st.session_state:
-    st.session_state.price_range_overrides = dict(workspace.get("price_ranges", {}))
-if "price_editor_version" not in st.session_state:
-    st.session_state.price_editor_version = 0
 
 with st.expander(
     "编辑全部价格范围" if navigation == "价格表管理" else "快速修改价格范围",
@@ -251,6 +315,7 @@ with st.expander(
                 maximum = round(float(record["最高价"]), 2)
                 if minimum != rule.minimum or maximum != rule.maximum:
                     saved_ranges[rule.rule_id] = {"minimum": minimum, "maximum": maximum}
+            _record_change("修改价格范围")
             st.session_state.price_range_overrides = saved_ranges
             st.session_state.price_editor_version += 1
             workspace["price_ranges"] = dict(saved_ranges)
@@ -258,6 +323,7 @@ with st.expander(
             st.success(f"价格表已保存，共有 {len(saved_ranges)} 个品类使用自定义范围。")
             st.rerun()
     if price_actions[1].button("恢复默认价格表", use_container_width=True):
+        _record_change("恢复默认价格表")
         st.session_state.price_range_overrides = {}
         st.session_state.price_editor_version += 1
         st.session_state.pop("last_price_range_import", None)
@@ -286,6 +352,7 @@ with st.expander(
                     raise ValueError
                 valid_ranges[str(rule_id)] = {"minimum": round(minimum, 2), "maximum": round(maximum, 2)}
             if st.session_state.get("last_price_range_import") != import_digest:
+                _record_change("导入自定义价格表")
                 st.session_state.price_range_overrides = valid_ranges
                 st.session_state.price_editor_version += 1
                 st.session_state.last_price_range_import = import_digest
@@ -305,11 +372,6 @@ if new_uploads:
     workspace["updated"] = time.time()
 
 uploaded_files = list(workspace["files"].get(file_format, []))
-
-if "learned_category_mappings" not in st.session_state:
-    st.session_state.learned_category_mappings = dict(workspace.get("mappings", {}))
-if "product_category_mappings" not in st.session_state:
-    st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
 
 if uploaded_files:
     st.success(f"当前批次已保留 {len(uploaded_files)} 个产品包。普通页面刷新不会丢失；应用重启或重新部署后需重新上传。")
@@ -337,11 +399,17 @@ with st.expander("品类映射记忆（可选）"):
     mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
     if mapping_file is not None:
         try:
-            imported = json.loads(mapping_file.getvalue().decode("utf-8"))
+            mapping_bytes = mapping_file.getvalue()
+            mapping_digest = hashlib.sha256(mapping_bytes).hexdigest()
+            imported = json.loads(mapping_bytes.decode("utf-8"))
             valid = {str(key): str(value) for key, value in imported.items() if resolve_rule(str(value)) is not None}
-            st.session_state.learned_category_mappings.update(valid)
-            workspace["mappings"] = dict(st.session_state.learned_category_mappings)
-            st.success(f"已导入 {len(valid)} 条品类映射。")
+            if valid and st.session_state.get("last_mapping_import") != mapping_digest:
+                _record_change("导入品类映射")
+                st.session_state.learned_category_mappings.update(valid)
+                st.session_state.last_mapping_import = mapping_digest
+                workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                workspace["updated"] = time.time()
+                st.success(f"已导入 {len(valid)} 条品类映射。")
         except Exception:
             st.error("映射文件无法读取。")
 
@@ -432,6 +500,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                         disabled=not manual_corrections,
                         use_container_width=True,
                     ):
+                        _record_change(f"纠正原始品类 · {len(manual_corrections)} 项")
                         for source_category, rule_id in manual_corrections.items():
                             if rule_id is None:
                                 st.session_state.learned_category_mappings.pop(source_category, None)
@@ -515,6 +584,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                     key=f"save_map_{file_index}",
                     disabled=len(selected_mappings) != len(categories),
                 ):
+                    _record_change(f"确认未识别品类 · {len(selected_mappings)} 项")
                     st.session_state.learned_category_mappings.update(selected_mappings)
                     workspace["mappings"] = dict(st.session_state.learned_category_mappings)
                     workspace["updated"] = time.time()
@@ -532,16 +602,56 @@ for file_index, uploaded in enumerate(uploaded_files):
             with result_tab:
                 if not pricing_result.product_summary.empty:
                     visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"]).reset_index(drop=True)
-                    st.caption("品类不对？直接点击表格中的一行或多行，再在表格下方批量纠正。按住 Ctrl 可连续选择多行。")
-                    selection_event = st.dataframe(
-                        visible,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=330,
-                        on_select="rerun",
-                        selection_mode="multi-row",
-                        key=f"pricing_table_{file_index}",
+                    filter_cols = st.columns([2, 1, 1])
+                    search_term = filter_cols[0].text_input(
+                        "搜索商品",
+                        placeholder="输入商品 Handle、原始分类或识别品类",
+                        key=f"product_search_{file_index}",
+                    ).strip().casefold()
+                    primary_values = sorted(visible["一级品类"].dropna().astype(str).unique().tolist())
+                    primary_filter = filter_cols[1].selectbox(
+                        "一级品类",
+                        ["全部"] + primary_values,
+                        key=f"primary_filter_{file_index}",
                     )
+                    price_filter = filter_cols[2].selectbox(
+                        "价格状态",
+                        ["全部", "有折扣", "无折扣"],
+                        key=f"price_filter_{file_index}",
+                    )
+                    if search_term:
+                        searchable_columns = [
+                            column for column in ["Handle", "原始分类", "一级品类", "识别品类", "匹配方式"]
+                            if column in visible.columns
+                        ]
+                        search_mask = pd.Series(False, index=visible.index)
+                        for column in searchable_columns:
+                            search_mask |= visible[column].fillna("").astype(str).str.casefold().str.contains(
+                                search_term, regex=False
+                            )
+                        visible = visible[search_mask]
+                    if primary_filter != "全部":
+                        visible = visible[visible["一级品类"].astype(str) == primary_filter]
+                    if price_filter == "有折扣":
+                        visible = visible[visible["新划线价"] > 0]
+                    elif price_filter == "无折扣":
+                        visible = visible[visible["新划线价"] <= 0]
+                    visible = visible.reset_index(drop=True)
+                    st.caption(f"当前显示 {len(visible)} / {len(pricing_result.product_summary)} 个商品。可搜索并按一级品类或折扣状态筛选。")
+                    st.caption("品类不对？直接点击表格中的一行或多行，再在表格下方批量纠正。按住 Ctrl 可连续选择多行。")
+                    if visible.empty:
+                        st.info("没有符合当前搜索或筛选条件的商品。")
+                        selection_event = None
+                    else:
+                        selection_event = st.dataframe(
+                            visible,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=330,
+                            on_select="rerun",
+                            selection_mode="multi-row",
+                            key=f"pricing_table_{file_index}",
+                        )
                     selected_rows = getattr(getattr(selection_event, "selection", None), "rows", [])
                     if selected_rows:
                         selected_items = visible.iloc[[int(index) for index in selected_rows]].copy()
@@ -599,6 +709,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                             use_container_width=True,
                         ):
                             selected_rule = corrected_rules[corrected_labels.index(corrected_label)]
+                            _record_change(f"批量纠正商品 · {len(selected_handles)} 个")
                             for selected_handle in selected_handles:
                                 st.session_state.product_category_mappings[selected_handle] = selected_rule.rule_id
                             workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
@@ -610,6 +721,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                                 key=f"reset_single_{file_index}_{selected_token}",
                                 use_container_width=True,
                             ):
+                                _record_change(f"恢复商品品类 · {len(selected_handles)} 个")
                                 for selected_handle in selected_handles:
                                     st.session_state.product_category_mappings.pop(selected_handle, None)
                                 workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
@@ -621,8 +733,16 @@ for file_index, uploaded in enumerate(uploaded_files):
                     similar_confirmed = st.checkbox("确认此文件的相似品类关系", key=f"confirm_{file_index}")
                     if similar_confirmed and "原始分类" in similar:
                         mapped_ids = [f"{primary}::{name}" for primary, name in zip(similar["一级品类"], similar["识别品类"])]
-                        st.session_state.learned_category_mappings.update(dict(zip(similar["原始分类"], mapped_ids)))
-                        workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                        confirmed_mappings = dict(zip(similar["原始分类"], mapped_ids))
+                        changed_mappings = {
+                            key: value for key, value in confirmed_mappings.items()
+                            if st.session_state.learned_category_mappings.get(key) != value
+                        }
+                        if changed_mappings:
+                            _record_change(f"确认相似品类 · {len(changed_mappings)} 项")
+                            st.session_state.learned_category_mappings.update(changed_mappings)
+                            workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                            workspace["updated"] = time.time()
 
             with changes_tab:
                 preview = build_change_preview(source, pricing_result.frame)
