@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from category_rules import classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
+from category_rules import CategoryRule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
 from exporter import export_csv
 from format_adapter import SHOPIFY, prepare_frame
@@ -251,6 +251,19 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.product_summary["识别品类"].unique().tolist(), ["Furniture"])
         self.assertTrue(result.product_summary["新售价"].between(109.90, 139.99).all())
         self.assertTrue(result.product_summary["新划线价"].replace(0, 109.90).between(109.90, 139.99).all())
+        self.assertEqual(validate_fixed_pricing(result), ())
+
+    def test_user_added_secondary_category_participates_in_pricing(self):
+        source = pd.DataFrame([
+            row("vest-a", "Men's Outdoor Utility Vest", "Men's, Tops, Vests", "20", "0", "V-1", "https://example.com/v.jpg"),
+            row("vest-b", "Men's Lightweight Waistcoat", "Men's, Tops, Vests", "20", "0", "V-2", "https://example.com/v2.jpg"),
+        ])
+        custom_rule = CategoryRule(
+            "Men's Clothing", "Vests", 32.99, 42.99, ("vest", "vests", "waistcoat")
+        )
+        result = apply_fixed_pricing(source, custom_category_rules=(custom_rule,))
+        self.assertEqual(result.product_summary["识别品类"].unique().tolist(), ["Vests"])
+        self.assertTrue(result.product_summary["新售价"].between(32.99, 42.99).all())
         self.assertEqual(validate_fixed_pricing(result), ())
 
     def test_discount_is_by_product_and_within_range(self):

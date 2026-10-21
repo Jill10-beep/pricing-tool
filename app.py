@@ -10,7 +10,7 @@ import zipfile
 import pandas as pd
 import streamlit as st
 
-from category_rules import CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
+from category_rules import CategoryRule, CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
 from exporter import export_csv
 from format_adapter import SHOPIFY, SUPPLIER, output_suffix, prepare_frame
@@ -163,6 +163,7 @@ workspace = store.setdefault(
         "mappings": {},
         "product_mappings": {},
         "price_ranges": {},
+        "custom_categories": {},
         "history": [],
         "updated": time.time(),
     },
@@ -177,6 +178,42 @@ if "learned_category_mappings" not in st.session_state:
     st.session_state.learned_category_mappings = dict(workspace.get("mappings", {}))
 if "product_category_mappings" not in st.session_state:
     st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
+if "custom_category_rules" not in st.session_state:
+    st.session_state.custom_category_rules = dict(workspace.get("custom_categories", {}))
+
+
+def _custom_rule_objects() -> tuple[CategoryRule, ...]:
+    rules = []
+    for rule_id, values in st.session_state.custom_category_rules.items():
+        primary, _, fallback_name = str(rule_id).partition("::")
+        name = str(values.get("name", fallback_name)).strip()
+        keywords = tuple(
+            value.strip() for value in values.get("keywords", []) if str(value).strip()
+        )
+        rules.append(CategoryRule(
+            primary=str(values.get("primary", primary)).strip(),
+            name=name,
+            minimum=float(values["minimum"]),
+            maximum=float(values["maximum"]),
+            keywords=keywords or (name.lower(),),
+        ))
+    return tuple(rules)
+
+
+def _all_rules() -> tuple[CategoryRule, ...]:
+    return tuple(CATEGORY_RULES) + _custom_rule_objects()
+
+
+def _rules_for_available_primary(primary: str) -> tuple[CategoryRule, ...]:
+    return tuple(rule for rule in _all_rules() if rule.primary == primary)
+
+
+def _resolve_available_rule(value: str) -> CategoryRule | None:
+    matches = [rule for rule in _all_rules() if rule.rule_id == value]
+    if matches:
+        return matches[0]
+    named = [rule for rule in _all_rules() if rule.name == value]
+    return named[0] if len(named) == 1 else resolve_rule(value)
 
 
 def _record_change(label: str) -> None:
@@ -188,6 +225,7 @@ def _record_change(label: str) -> None:
         "mappings": dict(st.session_state.learned_category_mappings),
         "product_mappings": dict(st.session_state.product_category_mappings),
         "price_ranges": dict(st.session_state.price_range_overrides),
+        "custom_categories": dict(st.session_state.custom_category_rules),
     })
     del history[:-20]
 
@@ -200,10 +238,12 @@ def _undo_last_change() -> str | None:
     st.session_state.learned_category_mappings = dict(snapshot["mappings"])
     st.session_state.product_category_mappings = dict(snapshot["product_mappings"])
     st.session_state.price_range_overrides = dict(snapshot["price_ranges"])
+    st.session_state.custom_category_rules = dict(snapshot.get("custom_categories", {}))
     st.session_state.price_editor_version += 1
     workspace["mappings"] = dict(snapshot["mappings"])
     workspace["product_mappings"] = dict(snapshot["product_mappings"])
     workspace["price_ranges"] = dict(snapshot["price_ranges"])
+    workspace["custom_categories"] = dict(snapshot.get("custom_categories", {}))
     workspace["updated"] = time.time()
     return str(snapshot["label"])
 
@@ -255,18 +295,140 @@ if navigation == "品类与价格规则":
     st.markdown('<div class="page-head"><div><div class="section-kicker">Category & Pricing Rules</div><h2>品类与价格规则</h2></div><p>维护品类关系和价格范围，修改后同时应用于两种产品包格式</p></div>', unsafe_allow_html=True)
     rule_overview = st.columns(3)
     rule_overview[0].metric("一级品类", len(PRIMARY_CATEGORIES))
-    rule_overview[1].metric("具体品类规则", len(CATEGORY_RULES))
+    rule_overview[1].metric("具体品类规则", len(_all_rules()))
     rule_overview[2].metric("自定义价格范围", len(st.session_state.price_range_overrides))
     relationship_primary = st.selectbox(
         "查看品类关系",
         list(PRIMARY_CATEGORIES),
         key="relationship_primary",
     )
-    relationship_rules = rules_for_primary(relationship_primary)
+    relationship_rules = _rules_for_available_primary(relationship_primary)
     st.caption(
         f"{relationship_primary} 下包含 {len(relationship_rules)} 个具体品类："
         + "、".join(rule.name for rule in relationship_rules)
     )
+    with st.expander("新增二级品类", expanded=False):
+        st.caption("新增后会立即出现在人工品类选择中；填写识别关键词后，也可以参与自动识别。")
+        with st.form("add_custom_category_form", clear_on_submit=True):
+            add_columns = st.columns(2)
+            new_primary = add_columns[0].selectbox("所属一级品类", list(PRIMARY_CATEGORIES))
+            new_name = add_columns[1].text_input("二级品类名称", placeholder="例如 Vests")
+            price_columns = st.columns(2)
+            new_minimum = price_columns[0].number_input("最低价（USD）", min_value=0.01, value=19.99, step=1.0)
+            new_maximum = price_columns[1].number_input("最高价（USD）", min_value=0.01, value=29.99, step=1.0)
+            new_keywords = st.text_input(
+                "识别关键词（可选，用英文逗号分隔）",
+                placeholder="vest, waistcoat, sleeveless jacket",
+            )
+            add_category = st.form_submit_button("保存并启用二级品类", use_container_width=True)
+        if add_category:
+            clean_name = new_name.strip()
+            rule_id = f"{new_primary}::{clean_name}"
+            existing_ids = {rule.rule_id.casefold() for rule in _all_rules()}
+            if not clean_name:
+                st.error("请填写二级品类名称。")
+            elif "::" in clean_name:
+                st.error("二级品类名称不能包含 ::。")
+            elif rule_id.casefold() in existing_ids:
+                st.error("这个一级品类下已经存在同名二级品类。")
+            elif new_maximum < new_minimum:
+                st.error("最高价必须大于或等于最低价。")
+            else:
+                keywords = [value.strip() for value in new_keywords.split(",") if value.strip()]
+                _record_change(f"新增二级品类 · {clean_name}")
+                st.session_state.custom_category_rules[rule_id] = {
+                    "primary": new_primary,
+                    "name": clean_name,
+                    "minimum": round(float(new_minimum), 2),
+                    "maximum": round(float(new_maximum), 2),
+                    "keywords": keywords or [clean_name.lower()],
+                }
+                workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
+                workspace["updated"] = time.time()
+                st.toast(f"已新增二级品类：{clean_name}")
+                st.rerun()
+        custom_rule_objects = _custom_rule_objects()
+        if custom_rule_objects:
+            st.markdown("#### 已添加的二级品类")
+            custom_labels = {
+                f"{rule.primary} → {rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）": rule.rule_id
+                for rule in custom_rule_objects
+            }
+            remove_label = st.selectbox("选择要删除的自定义品类", list(custom_labels))
+            if st.button("删除所选自定义品类", type="secondary"):
+                removed_rule_id = custom_labels[remove_label]
+                removed_name = st.session_state.custom_category_rules[removed_rule_id]["name"]
+                _record_change(f"删除二级品类 · {removed_name}")
+                st.session_state.custom_category_rules.pop(removed_rule_id, None)
+                st.session_state.price_range_overrides.pop(removed_rule_id, None)
+                st.session_state.learned_category_mappings = {
+                    key: value for key, value in st.session_state.learned_category_mappings.items()
+                    if value != removed_rule_id
+                }
+                st.session_state.product_category_mappings = {
+                    key: value for key, value in st.session_state.product_category_mappings.items()
+                    if value != removed_rule_id
+                }
+                workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
+                workspace["price_ranges"] = dict(st.session_state.price_range_overrides)
+                workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
+                workspace["updated"] = time.time()
+                st.rerun()
+        custom_tools = st.columns(2)
+        custom_tools[0].download_button(
+            "下载自定义品类",
+            data=json.dumps(st.session_state.custom_category_rules, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name="custom-categories.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+        custom_import = custom_tools[1].file_uploader(
+            "导入自定义品类",
+            type=["json"],
+            key="custom_category_import",
+            label_visibility="collapsed",
+        )
+        if custom_import is not None:
+            import_bytes = custom_import.getvalue()
+            import_digest = hashlib.sha256(import_bytes).hexdigest()
+            if st.session_state.get("last_custom_category_import") != import_digest:
+                try:
+                    imported_categories = json.loads(import_bytes.decode("utf-8"))
+                    validated_categories = {}
+                    for imported_id, values in imported_categories.items():
+                        primary = str(values["primary"]).strip()
+                        name = str(values["name"]).strip()
+                        minimum = float(values["minimum"])
+                        maximum = float(values["maximum"])
+                        if (
+                            primary not in PRIMARY_CATEGORIES
+                            or not name
+                            or minimum <= 0
+                            or maximum < minimum
+                            or str(imported_id) != f"{primary}::{name}"
+                            or str(imported_id).casefold() in {rule.rule_id.casefold() for rule in CATEGORY_RULES}
+                        ):
+                            raise ValueError
+                        validated_categories[str(imported_id)] = {
+                            "primary": primary,
+                            "name": name,
+                            "minimum": round(minimum, 2),
+                            "maximum": round(maximum, 2),
+                            "keywords": [
+                                str(value).strip() for value in values.get("keywords", [name.lower()])
+                                if str(value).strip()
+                            ],
+                        }
+                    _record_change(f"导入自定义品类 · {len(validated_categories)} 项")
+                    st.session_state.custom_category_rules.update(validated_categories)
+                    st.session_state.last_custom_category_import = import_digest
+                    workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
+                    workspace["updated"] = time.time()
+                    st.toast(f"已导入 {len(validated_categories)} 个二级品类")
+                    st.rerun()
+                except Exception:
+                    st.error("自定义品类文件无法读取或内容不符合要求。")
     file_format = SUPPLIER
     new_uploads = None
 else:
@@ -298,7 +460,7 @@ with st.expander(
 ):
     st.caption("修改后点击保存。这里只改变价格区间，不改变品类名称；新范围会立即用于供应商和 Shopify 两个入口。")
     range_rows = []
-    for rule in CATEGORY_RULES:
+    for rule in _all_rules():
         custom = st.session_state.price_range_overrides.get(rule.rule_id, {})
         range_rows.append({
             "规则ID": rule.rule_id,
@@ -330,7 +492,7 @@ with st.expander(
         if not invalid.empty:
             st.error("保存失败：最低价必须大于0，最高价必须大于或等于最低价。")
         else:
-            defaults = {rule.rule_id: rule for rule in CATEGORY_RULES}
+            defaults = {rule.rule_id: rule for rule in _all_rules()}
             saved_ranges = {}
             for record in edited_ranges.to_dict("records"):
                 rule = defaults[str(record["规则ID"])]
@@ -366,7 +528,7 @@ with st.expander(
         import_digest = hashlib.sha256(import_bytes).hexdigest()
         try:
             imported_ranges = json.loads(import_bytes.decode("utf-8"))
-            known_ids = {rule.rule_id for rule in CATEGORY_RULES}
+            known_ids = {rule.rule_id for rule in _all_rules()}
             valid_ranges = {}
             for rule_id, values in imported_ranges.items():
                 minimum = float(values["minimum"])
@@ -412,7 +574,7 @@ if not uploaded_files:
     )
     with st.expander("查看已内置的固定价格区间"):
         st.dataframe(
-            [{"一级品类": rule.primary, "具体品类": rule.name, "最低售价": rule.minimum, "最高售价": rule.maximum} for rule in CATEGORY_RULES],
+            [{"一级品类": rule.primary, "具体品类": rule.name, "最低售价": rule.minimum, "最高售价": rule.maximum} for rule in _all_rules()],
             use_container_width=True,
             hide_index=True,
         )
@@ -425,7 +587,7 @@ with st.expander("品类映射记忆（可选）"):
             mapping_bytes = mapping_file.getvalue()
             mapping_digest = hashlib.sha256(mapping_bytes).hexdigest()
             imported = json.loads(mapping_bytes.decode("utf-8"))
-            valid = {str(key): str(value) for key, value in imported.items() if resolve_rule(str(value)) is not None}
+            valid = {str(key): str(value) for key, value in imported.items() if _resolve_available_rule(str(value)) is not None}
             if valid and st.session_state.get("last_mapping_import") != mapping_digest:
                 _record_change("导入品类映射")
                 st.session_state.learned_category_mappings.update(valid)
@@ -468,6 +630,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
                 st.session_state.product_category_mappings,
+                _custom_rule_objects(),
             )
 
             priced_count = len(pricing_result.product_summary)
@@ -505,7 +668,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 )
                 all_rule_labels = [
                     f"{rule.primary} → {rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）"
-                    for rule in CATEGORY_RULES
+                    for rule in _all_rules()
                 ]
                 manual_corrections: dict[str, str | None] = {}
                 with st.expander("自动识别不正确？手动选择正确品类", expanded=False):
@@ -525,7 +688,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                         if selection == "恢复程序自动识别":
                             manual_corrections[source_category] = None
                         elif selection not in {"保持当前识别", "恢复程序自动识别"}:
-                            manual_corrections[source_category] = CATEGORY_RULES[all_rule_labels.index(selection)].rule_id
+                            manual_corrections[source_category] = _all_rules()[all_rule_labels.index(selection)].rule_id
                     if st.button(
                         "保存人工纠正并重新定价",
                         key=f"save_manual_{file_index}",
@@ -602,7 +765,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                         key=f"primary_{file_index}_{category}",
                     )
                     if primary != "请选择":
-                        candidate_rules = rules_for_primary(primary)
+                        candidate_rules = _rules_for_available_primary(primary)
                         labels = [f"{rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）" for rule in candidate_rules]
                         selection = st.selectbox(
                             f"{category}：参考哪个具体品类？",
@@ -714,7 +877,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                             index=primary_index,
                             key=f"single_primary_{file_index}_{selected_token}",
                         )
-                        corrected_rules = rules_for_primary(corrected_primary)
+                        corrected_rules = _rules_for_available_primary(corrected_primary)
                         corrected_labels = []
                         for rule in corrected_rules:
                             custom_range = st.session_state.price_range_overrides.get(rule.rule_id, {})

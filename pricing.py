@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from collections import Counter
 from dataclasses import dataclass
 
@@ -90,15 +91,50 @@ def _product_group_keys(frame: pd.DataFrame) -> pd.Series:
     return handles.where(handles.ne(""), fallback)
 
 
+def _resolve_available_rule(value: str, custom_rules: tuple[CategoryRule, ...]) -> CategoryRule | None:
+    custom_by_id = {rule.rule_id: rule for rule in custom_rules}
+    if value in custom_by_id:
+        return custom_by_id[value]
+    custom_matches = [rule for rule in custom_rules if rule.name == value]
+    if len(custom_matches) == 1:
+        return custom_matches[0]
+    return resolve_rule(value)
+
+
+def _classify_custom_rule(text: str, custom_rules: tuple[CategoryRule, ...]) -> CategoryRule | None:
+    normalized = " ".join(str(text).lower().replace("_", " ").replace("-", " ").split())
+    matches: list[tuple[int, CategoryRule]] = []
+    for rule in custom_rules:
+        terms = (rule.name, *rule.keywords)
+        matched_lengths = []
+        for term in terms:
+            normalized_term = " ".join(str(term).lower().replace("_", " ").replace("-", " ").split())
+            if not normalized_term:
+                continue
+            if re.search(r"[\u4e00-\u9fff]", normalized_term):
+                matched = normalized_term in normalized
+            else:
+                matched = re.search(
+                    rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])",
+                    normalized,
+                ) is not None
+            if matched:
+                matched_lengths.append(len(normalized_term))
+        if matched_lengths:
+            matches.append((max(matched_lengths), rule))
+    return max(matches, key=lambda item: item[0])[1] if matches else None
+
+
 def _category_level_decisions(
     frame: pd.DataFrame,
     overrides: dict[str, str],
+    custom_rules: tuple[CategoryRule, ...],
 ) -> dict[str, tuple[CategoryRule | None, str | None, bool]]:
     """Choose one rule per supplier category so sibling products cannot drift."""
     decisions: dict[str, tuple[CategoryRule | None, str | None, bool]] = {}
     categories = frame.get("category", pd.Series("", index=frame.index)).astype(str).str.strip()
     for source_category in (value for value in categories.unique() if value):
-        override_rule = resolve_rule(overrides.get(source_category, ""))
+        override_rule = _resolve_available_rule(overrides.get(source_category, ""), custom_rules)
         if override_rule:
             decisions[source_category] = (
                 override_rule,
@@ -107,7 +143,7 @@ def _category_level_decisions(
             )
             continue
 
-        direct_rule = classify_product(source_category)
+        direct_rule = _classify_custom_rule(source_category, custom_rules) or classify_product(source_category)
         if direct_rule and not has_category_conflict(source_category, direct_rule):
             decisions[source_category] = (
                 direct_rule,
@@ -119,7 +155,10 @@ def _category_level_decisions(
         category_rows = frame[categories.eq(source_category)]
         titles = category_rows.get("Title", pd.Series("", index=category_rows.index)).astype(str).str.strip()
         unique_titles = tuple(dict.fromkeys(value for value in titles if value))
-        title_rules = [rule for title in unique_titles if (rule := classify_product(title)) is not None]
+        title_rules = [
+            rule for title in unique_titles
+            if (rule := (_classify_custom_rule(title, custom_rules) or classify_product(title))) is not None
+        ]
         counts = Counter(rule.rule_id for rule in title_rules)
         if counts and len(title_rules) >= max(2, math.ceil(len(unique_titles) * 0.60)):
             best_id, best_count = counts.most_common(1)[0]
@@ -163,6 +202,7 @@ def apply_fixed_pricing(
     category_overrides: dict[str, str] | None = None,
     price_range_overrides: dict[str, dict[str, float]] | None = None,
     product_category_overrides: dict[str, str] | None = None,
+    custom_category_rules: tuple[CategoryRule, ...] | None = None,
 ) -> PricingResult:
     output = frame.copy(deep=True)
     variants = variant_mask(output)
@@ -172,7 +212,8 @@ def apply_fixed_pricing(
     overrides = category_overrides or {}
     range_overrides = price_range_overrides or {}
     product_overrides = product_category_overrides or {}
-    category_decisions = _category_level_decisions(output, overrides)
+    custom_rules = custom_category_rules or ()
+    category_decisions = _category_level_decisions(output, overrides, custom_rules)
     unresolved: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     expected_products = 0
@@ -193,7 +234,7 @@ def apply_fixed_pricing(
         title = next((value for value in titles if value), "")
         structured_text = f"{source_category} {title}"
         category_decision = category_decisions.get(source_category)
-        product_override_rule = resolve_rule(product_overrides.get(handle_text, ""))
+        product_override_rule = _resolve_available_rule(product_overrides.get(handle_text, ""), custom_rules)
         override_rule = product_override_rule or (
             category_decision[0] if category_decision and category_decision[2] else None
         )
@@ -209,7 +250,7 @@ def apply_fixed_pricing(
             rule = None
             match_method = None
             if rule is None:
-                rule = classify_product(title)
+                rule = _classify_custom_rule(title, custom_rules) or classify_product(title)
                 match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
             if rule is None:
                 rule, match_method = infer_similar_category(_product_text(group))
