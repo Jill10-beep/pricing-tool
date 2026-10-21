@@ -18,7 +18,7 @@ from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pr
 from validator import validate_frame
 
 
-st.set_page_config(page_title="产品自动定价工具", page_icon="◆", layout="wide")
+st.set_page_config(page_title="JILL10 PRICING", page_icon="➕", layout="wide")
 
 WORKSPACE_TTL_SECONDS = 6 * 60 * 60
 MAX_ACTIVE_WORKSPACES = 50
@@ -135,7 +135,7 @@ st.markdown(
     @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} }
     </style>
     <div class="hero">
-      <div class="brandline"><span class="brandmark">MP</span>MORYVORO PRICING</div>
+      <div class="brandline"><span class="brandmark">+10</span>JILL10 PRICING</div>
       <div class="eyebrow">Pricing Workspace</div>
       <h1>产品包批量定价与结果校验</h1>
       <p>系统自动完成品类识别、价格计算和异常检查，并在不改变原始文件结构的前提下生成可直接使用的新产品包。</p>
@@ -248,8 +248,8 @@ def _undo_last_change() -> str | None:
     return str(snapshot["label"])
 
 with st.sidebar:
-    st.markdown("## MORYVORO")
-    st.caption("产品定价处理中心")
+    st.markdown("## +10 · JILL10 PRICING")
+    st.caption("智能产品定价工作台")
     st.markdown("---")
     st.caption("独立工作区")
     st.code(workspace_id[:8].upper(), language=None)
