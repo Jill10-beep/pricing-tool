@@ -63,7 +63,7 @@ Footwear|Sneakers|49.99|69.99
 Footwear|Casual Shoes|39.99|49.99
 Footwear|Sandals|29.99|39.99
 Footwear|Slippers|19.99|29.99
-Footwear|Boots|49.99|69.99
+Footwear|Boots|39.00|59.00
 Footwear|Heels|39.99|49.99
 Footwear|Flats|29.99|39.99
 Footwear|Loafers|39.99|49.99
@@ -104,7 +104,7 @@ Underwear, Sleepwear and Swimwear|Nightwear|19.99|29.99
 Underwear, Sleepwear and Swimwear|Robes|29.99|44.99
 Underwear, Sleepwear and Swimwear|Shapewear|24.99|39.99
 Underwear, Sleepwear and Swimwear|Bikini|24.99|34.99
-Underwear, Sleepwear and Swimwear|One Piece Swimsuit|29.99|39.99
+Underwear, Sleepwear and Swimwear|One Piece Swimsuit|20.00|35.00
 Underwear, Sleepwear and Swimwear|Swim Cover Ups|24.99|34.99
 Underwear, Sleepwear and Swimwear|Beachwear|24.99|39.99
 Sports and Outdoor|Yoga Wear|29.99|44.99
@@ -211,6 +211,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Footwear::Running Shoes": ("running shoe", "跑鞋"),
     "Footwear::Casual Shoes": ("casual shoe", "休闲鞋"),
     "Footwear::Boots": ("work boot", "work boots", "western boot", "western boots", "cowboy boot", "cowboy boots", "leather boot", "leather boots", "boot", "boots", "靴子", "工作靴", "西部靴"),
+    "Underwear, Sleepwear and Swimwear::One Piece Swimsuit": ("one piece swimsuit", "one-piece swimsuit", "one piece swimwear", "连体泳衣"),
 }
 
 LEGACY_RULE_IDS = {

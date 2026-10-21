@@ -77,7 +77,12 @@ class ToolTests(unittest.TestCase):
         self.assertNotEqual(women.primary, "Men's Clothing")
         self.assertEqual(classify_product("Women's cotton T-Shirt").primary, "Women's Clothing")
         self.assertEqual(classify_product("Men's cotton T-Shirt").primary, "Men's Clothing")
-        self.assertEqual(classify_product("Men's Waterproof Leather Work Boots").rule_id, "Footwear::Boots")
+        boots = classify_product("Men's Waterproof Leather Work Boots")
+        self.assertEqual(boots.rule_id, "Footwear::Boots")
+        self.assertEqual((boots.minimum, boots.maximum), (39.00, 59.00))
+        swimsuit = classify_product("Women's One Piece Swimsuit")
+        self.assertEqual(swimsuit.rule_id, "Underwear, Sleepwear and Swimwear::One Piece Swimsuit")
+        self.assertEqual((swimsuit.minimum, swimsuit.maximum), (20.00, 35.00))
         self.assertEqual(classify_product("Unisex Western Cowboy Boots").rule_id, "Footwear::Boots")
         self.assertEqual(infer_primary_category("Men's, Top, Vests"), "Men's Clothing")
 
