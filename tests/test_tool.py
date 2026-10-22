@@ -2,11 +2,11 @@ import unittest
 
 import pandas as pd
 
-from category_rules import CategoryRule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
+from category_rules import CategoryRule, apply_plus_size, base_rule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
-from exporter import export_csv
+from exporter import export_csv, verify_export
 from format_adapter import SHOPIFY, prepare_frame
-from pricing import apply_fixed_pricing, validate_fixed_pricing
+from pricing import apply_fixed_pricing, parse_number, validate_fixed_pricing
 from validator import validate_frame
 
 
@@ -83,6 +83,24 @@ class ToolTests(unittest.TestCase):
         swimsuit = classify_product("Women's One Piece Swimsuit")
         self.assertEqual(swimsuit.rule_id, "Underwear, Sleepwear and Swimwear::One Piece Swimsuit")
         self.assertEqual((swimsuit.minimum, swimsuit.maximum), (20.00, 35.00))
+
+    def test_womens_tie_dye_skate_shoes_stay_in_footwear(self):
+        category = "Women's, Shoes, Skate Shoes"
+        title = "womens-pastel-tie-dye-printed-platform-sneakers"
+        self.assertEqual(infer_primary_category(category), "Footwear")
+        category_rule = classify_product(category)
+        self.assertIsNotNone(category_rule)
+        self.assertEqual(category_rule.rule_id, "Footwear::Sneakers")
+        title_rule = classify_product(title)
+        self.assertIsNotNone(title_rule)
+        self.assertEqual(title_rule.rule_id, "Footwear::Sneakers")
+        source = pd.DataFrame([
+            row("shoe-a", title, category, "20", "0", "SH-1", "https://example.com/shoe.jpg"),
+            row("shoe-b", "womens-sage-green-printed-sneakers", category, "20", "0", "SH-2", "https://example.com/shoe2.jpg"),
+        ])
+        result = apply_fixed_pricing(source)
+        self.assertEqual(result.product_summary["一级品类"].unique().tolist(), ["Footwear"])
+        self.assertNotIn("Ties", result.product_summary["识别品类"].tolist())
         self.assertEqual(classify_product("Unisex Western Cowboy Boots").rule_id, "Footwear::Boots")
         self.assertEqual(infer_primary_category("Men's, Top, Vests"), "Men's Clothing")
 
@@ -310,6 +328,161 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(summary.products, 4)
         self.assertEqual(summary.variants, 5)
         self.assertEqual(summary.image_only_rows, 1)
+
+
+class RegressionTests(unittest.TestCase):
+    """Cases found during code review of pricing accuracy."""
+
+    def test_fashion_idioms_are_not_mistaken_for_other_products(self):
+        expected = {
+            "Women's Tie Front Dress": "Women's Clothing::Dresses",
+            "Tie Waist Maxi Dress": "Women's Clothing::Dresses",
+            "Women's Shelf Bra Tank Top": "Women's Clothing::Tops",
+            "Women's Boot Cut Jeans": "Women's Clothing::Jeans",
+            "Women's Short Sleeve Dress": "Women's Clothing::Dresses",
+            "Women's Cap Sleeve Blouse": "Women's Clothing::Blouses",
+            "Men's Dress Pants": "Men's Clothing::Pants",
+            "Shoe Storage Rack": "Kitchen and Storage::Shoe Storage",
+        }
+        for title, rule_id in expected.items():
+            with self.subTest(title=title):
+                self.assertEqual(classify_product(title).rule_id, rule_id)
+
+    def test_real_ties_boots_and_shorts_still_match(self):
+        self.assertEqual(classify_product("Men's Silk Necktie").rule_id, "Jewelry and Accessories::Ties")
+        self.assertEqual(classify_product("Men's Knit Tie").rule_id, "Jewelry and Accessories::Ties")
+        self.assertEqual(classify_product("Women's Leather Boots").rule_id, "Footwear::Boots")
+        self.assertEqual(classify_product("Men's Shorts").rule_id, "Men's Clothing::Shorts")
+        self.assertEqual(classify_product("Tie Dye Sneakers").rule_id, "Footwear::Sneakers")
+
+    def test_singular_nouns_match_their_category(self):
+        self.assertEqual(classify_product("Women's Dress").rule_id, "Women's Clothing::Dresses")
+        self.assertEqual(classify_product("Women's Hoodie").rule_id, "Women's Clothing::Hoodies")
+        self.assertEqual(classify_product("Women's Cardigan").rule_id, "Women's Clothing::Cardigans")
+
+    def test_plus_size_in_title_is_honoured_when_category_does_not_say_so(self):
+        frame = pd.DataFrame([
+            row("d1", "Women's Plus Size Floral Dress", "Women's Dresses", "10", "0", "D1", ""),
+            row("d2", "Women's Floral Dress", "Women's Dresses", "10", "0", "D2", ""),
+        ])
+        summary = apply_fixed_pricing(frame).product_summary.set_index("Handle")
+        self.assertEqual(summary.loc["d1", "识别品类"], "Dresses (Plus Size)")
+        self.assertEqual(summary.loc["d1", "区间下限"], 36.99)
+        self.assertEqual(summary.loc["d1", "区间上限"], 49.99)
+        self.assertEqual(summary.loc["d2", "识别品类"], "Dresses")
+
+    def test_plus_size_helpers_are_inverse_and_idempotent(self):
+        base = classify_product("Women's Dresses")
+        plus = apply_plus_size(base, "plus size")
+        self.assertEqual(apply_plus_size(plus, "plus size"), plus)
+        self.assertEqual(base_rule(plus), base)
+        men = apply_plus_size(classify_product("Men's Hoodies"), "Plus-Size")
+        self.assertEqual((men.minimum, men.maximum), (42.99, 52.99))
+        self.assertEqual(base_rule(men), classify_product("Men's Hoodies"))
+
+    def test_price_range_override_also_reaches_plus_size_products(self):
+        frame = pd.DataFrame([row("d1", "Dress", "Women's Plus Size Dresses", "10", "0", "D1", "")])
+        result = apply_fixed_pricing(
+            frame,
+            price_range_overrides={"Women's Clothing::Dresses": {"minimum": 50.0, "maximum": 60.0}},
+        )
+        record = result.product_summary.iloc[0]
+        self.assertEqual((record["区间下限"], record["区间上限"]), (52.0, 65.0))
+        self.assertTrue(52.0 <= record["新售价"] <= 65.0)
+
+    def test_a_products_price_does_not_change_when_the_batch_grows(self):
+        base = [row(f"p{i}", f"Women's Dress {i}", "Women's Dresses", "10", "0", f"S{i}", "") for i in range(30)]
+        before = apply_fixed_pricing(pd.DataFrame(base)).product_summary.set_index("Handle")["新售价"]
+        extra = base + [row("new", "Women's Dress new", "Women's Dresses", "10", "0", "SN", "")]
+        after = apply_fixed_pricing(pd.DataFrame(extra)).product_summary.set_index("Handle")["新售价"]
+        self.assertTrue((before == after[before.index]).all())
+
+    def test_small_categories_still_get_distinct_prices(self):
+        for count in (2, 3, 4, 5):
+            frame = pd.DataFrame([
+                row(f"s{i}", f"Women's Dress {i}", "Women's Dresses", "10", "0", f"S{i}", "") for i in range(count)
+            ])
+            summary = apply_fixed_pricing(frame).product_summary
+            self.assertGreaterEqual(summary["新售价"].nunique(), min(4, count))
+
+    def test_products_without_any_price_are_reported_not_silently_skipped(self):
+        frame = pd.DataFrame([
+            row("ok", "Women's Dress", "Women's Dresses", "10", "0", "A", ""),
+            row("blank", "Women's Dress B", "Women's Dresses", "", "", "", ""),
+        ])
+        result = apply_fixed_pricing(frame)
+        self.assertEqual(result.skipped_handles, ("blank",))
+
+    def test_pricing_cache_returns_identical_but_independent_results(self):
+        frame = pd.DataFrame([row("c1", "Women's Dress", "Women's Dresses", "10", "0", "C1", "")])
+        first = apply_fixed_pricing(frame)
+        second = apply_fixed_pricing(frame)
+        pd.testing.assert_frame_equal(first.frame, second.frame)
+        second.frame.loc[:, "price"] = "999"
+        third = apply_fixed_pricing(frame)
+        self.assertNotEqual(third.frame["price"].iloc[0], "999")
+        changed = apply_fixed_pricing(frame, product_category_overrides={"c1": "Women's Clothing::Jackets"})
+        self.assertEqual(changed.product_summary.iloc[0]["识别品类"], "Jackets")
+
+    def test_parse_number_rejects_nan_and_inf(self):
+        self.assertIsNone(parse_number("nan"))
+        self.assertIsNone(parse_number("inf"))
+        self.assertEqual(parse_number("$1,234.50"), 1234.5)
+
+
+SHOPIFY_SAMPLE = (
+    "Handle,Title,Body (HTML),Type,Variant SKU,Variant Price,Variant Compare At Price,Image Src\n"
+    'dress-a,Women\'s Dress A,"<p style=""color:red;"">Soft; warm; cozy</p>",Dresses,A1,19.99,,https://x.com/a.jpg\n'
+    "dress-a,,,,A2,19.99,,\n"
+    "dress-b,Women's Dress B,<p>Light</p>,Dresses,B1,19.99,,https://x.com/b.jpg\n"
+    "dress-c,Women's Dress C,<p>Light</p>,Dresses,C1,19.99,,https://x.com/c.jpg\n"
+).encode("utf-8")
+
+
+class ExportVerificationTests(unittest.TestCase):
+    def _run(self, data=SHOPIFY_SAMPLE):
+        loaded = load_csv_bytes(data)
+        source = prepare_frame(loaded.frame, SHOPIFY)
+        result = apply_fixed_pricing(source)
+        output = export_csv(result.frame, loaded, SHOPIFY)
+        return data, loaded, result, output
+
+    def test_verification_passes_for_a_correct_shopify_export(self):
+        data, loaded, result, output = self._run()
+        handles = tuple(result.product_summary["Handle"])
+        self.assertEqual(verify_export(output, data, loaded, result.frame, SHOPIFY, handles), ())
+
+    def test_shopify_empty_compare_price_stays_empty_when_not_discounted(self):
+        data, loaded, result, output = self._run()
+        reloaded = load_csv_bytes(output).frame
+        undiscounted = result.frame["compare_at_price"].eq("0")
+        self.assertTrue(undiscounted.any())
+        self.assertTrue(reloaded.loc[undiscounted, "Variant Compare At Price"].eq("").all())
+        discounted = ~undiscounted
+        self.assertTrue(reloaded.loc[discounted, "Variant Compare At Price"].ne("").all())
+
+    def test_verification_catches_a_modified_non_price_cell(self):
+        data, loaded, result, output = self._run()
+        tampered = output.replace(b"Light", b"Heavy", 1)
+        issues = verify_export(tampered, data, loaded, result.frame, SHOPIFY, ())
+        self.assertTrue(any("非价格单元格" in issue for issue in issues))
+
+    def test_verification_catches_price_that_differs_from_plan(self):
+        data, loaded, result, output = self._run()
+        wrong = output.replace(b"dress-b,Women's Dress B,<p>Light</p>,Dresses,B1,", b"dress-b,Women's Dress B,<p>Light</p>,Dresses,B1,1", 1)
+        issues = verify_export(wrong, data, loaded, result.frame, SHOPIFY, ())
+        self.assertTrue(any("价格" in issue for issue in issues))
+
+    def test_verification_catches_inconsistent_variant_prices(self):
+        data, loaded, result, output = self._run()
+        prices = result.product_summary.set_index("Handle")["新售价"]
+        fixed = f"{prices['dress-a']:.2f}".encode()
+        tampered = output.replace(b",A2," + fixed, b",A2,12.34", 1)
+        issues = verify_export(tampered, data, loaded, result.frame, SHOPIFY, ("dress-a",))
+        self.assertTrue(any("变体价格不一致" in issue for issue in issues))
+
+    def test_semicolons_in_html_do_not_confuse_delimiter_detection(self):
+        self.assertEqual(load_csv_bytes(SHOPIFY_SAMPLE).delimiter, ",")
 
 
 if __name__ == "__main__":

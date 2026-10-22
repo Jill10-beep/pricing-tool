@@ -54,6 +54,24 @@ def _split_raw_csv(text: str, delimiter: str) -> tuple[tuple[tuple[str, ...], ..
     return tuple(rows), tuple(endings)
 
 
+def _detect_delimiter(text: str) -> str:
+    """Prefer the delimiter of the header row; only fall back to csv.Sniffer.
+
+    csv.Sniffer looks at the body and can be fooled by HTML descriptions that
+    contain many semicolons or pipes. Product files always start with a header
+    containing "Handle", so that row is a far more reliable signal.
+    """
+    header = text.lstrip("\ufeff").split("\n", 1)[0].rstrip("\r")
+    for candidate in (",", "\t", ";", "|"):
+        names = [name.strip().strip('"').strip() for name in header.split(candidate)]
+        if "Handle" in names and len(names) > 1:
+            return candidate
+    try:
+        return csv.Sniffer().sniff(text[:65536], delimiters=",\t;|").delimiter
+    except csv.Error:
+        return ","
+
+
 def load_csv_bytes(data: bytes) -> LoadedCsv:
     text = None
     encoding = None
@@ -71,10 +89,7 @@ def load_csv_bytes(data: bytes) -> LoadedCsv:
     if text is None or encoding is None:
         raise ValueError("无法识别文件编码，请另存为 UTF-8 CSV 后重试。")
 
-    try:
-        delimiter = csv.Sniffer().sniff(text[:65536], delimiters=",\t;|").delimiter
-    except csv.Error:
-        delimiter = ","
+    delimiter = _detect_delimiter(text)
 
     frame = pd.read_csv(
         StringIO(text),
@@ -108,6 +123,7 @@ def replace_price_columns(
         price_indexes = [source_header.index(name) for name in source_price_columns]
     except ValueError as exc:
         raise ValueError("原文件缺少价格列，无法安全导出。") from exc
+    price_values = {name: frame[name].astype(str).tolist() for name in frame_price_columns}
     output_rows: list[str] = []
     for row_number, raw_row in enumerate(loaded.raw_rows):
         cells = list(raw_row)
@@ -115,7 +131,7 @@ def replace_price_columns(
             raise ValueError(f"第 {row_number + 1} 行字段数量异常，已停止导出。")
         if row_number > 0:
             for column_index, frame_column in zip(price_indexes, frame_price_columns):
-                value = str(frame.iloc[row_number - 1][frame_column])
+                value = str(price_values[frame_column][row_number - 1])
                 original = cells[column_index]
                 stripped = original.strip()
                 if len(stripped) >= 2 and stripped.startswith('"') and stripped.endswith('"'):

@@ -209,6 +209,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Beauty::Skincare": ("skin care", "serum", "moisturizer", "cleanser", "face mask", "护肤"),
     "Beauty::Makeup": ("lipstick", "mascara", "eyeshadow", "foundation", "彩妆"),
     "Footwear::Running Shoes": ("running shoe", "跑鞋"),
+    "Footwear::Sneakers": ("sneaker", "sneakers", "trainer", "trainers", "skate shoe", "skate shoes", "platform sneaker", "platform sneakers", "运动鞋", "板鞋"),
     "Footwear::Casual Shoes": ("casual shoe", "休闲鞋"),
     "Footwear::Boots": ("work boot", "work boots", "western boot", "western boots", "cowboy boot", "cowboy boots", "leather boot", "leather boots", "boot", "boots", "靴子", "工作靴", "西部靴"),
     "Underwear, Sleepwear and Swimwear::One Piece Swimsuit": ("one piece swimsuit", "one-piece swimsuit", "one piece swimwear", "连体泳衣"),
@@ -219,10 +220,22 @@ LEGACY_RULE_IDS = {
 }
 
 
+def _singulars(word: str) -> tuple[str, ...]:
+    """Plausible singular forms (dresses -> dress, hoodies -> hoodie/hoody)."""
+    forms: list[str] = []
+    if word.endswith("ies") and len(word) > 4:
+        forms.extend((word[:-1], word[:-3] + "y"))
+    elif word.endswith(("sses", "shes", "ches", "xes")):
+        forms.append(word[:-2])
+    elif word.endswith("s") and not word.endswith("ss"):
+        forms.append(word[:-1])
+    return tuple(forms)
+
+
 def _default_keywords(name: str) -> tuple[str, ...]:
     parts = [name.lower()]
     parts.extend(part.strip().lower() for part in name.split("/") if part.strip())
-    parts.extend(part[:-1] for part in list(parts) if part.endswith("s") and len(part) > 4)
+    parts.extend(form for part in list(parts) if len(part) >= 4 for form in _singulars(part))
     return tuple(dict.fromkeys(parts))
 
 
@@ -282,10 +295,50 @@ def _normalize(text: str) -> str:
     return " ".join(str(text).lower().replace("_", " ").replace("-", " ").split())
 
 
+# A keyword is ignored when it appears inside one of these phrases. They are
+# fashion/product idioms where the keyword is NOT the product noun, e.g.
+# "Tie Front Dress" is a dress, "Boot Cut Jeans" are jeans, "Short Sleeve"
+# describes sleeves, and "Shoe Storage" is storage rather than footwear.
+_NEGATIVE_CONTEXT: dict[str, str] = {
+    "tie": r"tie\s+(?:dye|dyed|front|back|waist|up|neck|detail|hem|side|strap|shoulder|sleeve|knot|closure|bottom)",
+    "bow tie": r"bow\s+tie\s+(?:front|back|neck|detail|collar|waist|up|sleeve)",
+    "boot": r"boot\s+(?:cut|leg)",
+    "short": r"short\s+(?:sleeve|sleeves|sleeved|length|hem|style)",
+    "cap": r"cap\s+sleeves?",
+    "shelf": r"shelf\s+bra",
+    "bra": r"(?:shelf|built\s+in|inbuilt)\s+bra",
+    "dress": r"dress\s+(?:pants?|shirts?|shoes?|socks?|code|boots?|slacks|coat)",
+    "shoe": r"shoes?\s+(?:storage|rack|racks|organizer|organizers|box|boxes|bag|holder|cabinet|shelf|tree|horn|cleaner)",
+    "shoes": r"shoes?\s+(?:storage|rack|racks|organizer|organizers|box|boxes|bag|holder|cabinet|shelf|tree|horn|cleaner)",
+}
+_NEGATIVE_RE = {
+    keyword: re.compile(rf"(?<![a-z0-9])(?:{pattern})(?![a-z0-9])")
+    for keyword, pattern in _NEGATIVE_CONTEXT.items()
+}
+
+# Short, ambiguous product nouns. They only count as a product match when the
+# text contains no apparel noun ("Shelf Bra Tank Top" is a top, not furniture).
+_WEAK_ALIASES = {"tie", "ties", "shelf", "chair", "cabinet", "sofa"}
+_APPAREL_NOUNS = (
+    "dress", "dresses", "top", "tops", "tee", "tees", "t shirt", "t shirts", "blouse", "blouses",
+    "jeans", "skirt", "skirts", "hoodie", "hoodies", "sweater", "sweaters", "pants", "shorts",
+    "jumpsuit", "romper", "jacket", "coat", "cardigan", "leggings", "tank", "shirt", "shirts",
+    "sweatshirt", "blazer", "bodysuit", "pajamas", "连衣裙", "上衣", "裤",
+)
+
+
 def _contains(text: str, keyword: str) -> bool:
     keyword = _normalize(keyword)
+    negative = _NEGATIVE_RE.get(keyword)
+    if negative is not None:
+        text = negative.sub(" ", text)
     if re.search(r"[\u4e00-\u9fff]", keyword):
         return keyword in text
+    # "tie-dye" describes a color/pattern and must never be interpreted as
+    # the product noun "tie" (necktie). This previously caused sneakers with
+    # tie-dye patterns to be classified as Accessories → Ties.
+    if keyword == "tie":
+        return re.search(r"(?<![a-z0-9])tie(?!\s+dye)(?![a-z0-9])", text) is not None
     return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text) is not None
 
 
@@ -295,6 +348,16 @@ def rules_for_primary(primary: str) -> tuple[CategoryRule, ...]:
 
 def infer_primary_category(text: str) -> str | None:
     normalized = _normalize(text)
+    # Strong product nouns outrank gender. "Women's Shoes" is footwear, not
+    # Women's Clothing. The same lock also prevents pattern words such as
+    # "tie-dye" from pulling footwear into Accessories.
+    footwear_terms = (
+        "footwear", "shoe", "shoes", "sneaker", "sneakers", "trainer", "trainers",
+        "boot", "boots", "sandal", "sandals", "slipper", "slippers", "heel", "heels",
+        "loafer", "loafers", "skate shoe", "skate shoes", "跑鞋", "鞋", "靴子",
+    )
+    if any(_contains(normalized, term) for term in footwear_terms):
+        return "Footwear"
     # Gender tokens must be mutually exclusive. Never let "men" hidden inside
     # "women/womens/women's" affect the result (or the reverse).
     is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
@@ -308,30 +371,74 @@ def infer_primary_category(text: str) -> str | None:
     return best if scores[best] else None
 
 
-def _apply_plus_size(rule: CategoryRule, text: str) -> CategoryRule:
-    if not (_contains(text, "plus size") or "大码" in text):
+PLUS_SIZE_SUFFIX = " (Plus Size)"
+_PLUS_SIZE_RE = re.compile(r"(?<![a-z0-9])plus\s?size(?![a-z0-9])")
+# (minimum surcharge, maximum surcharge) added on top of the base price range.
+_PLUS_SIZE_SURCHARGE = {"Women's Clothing": (2.0, 5.0), "Men's Clothing": (3.0, 3.0)}
+
+
+def is_plus_size(text: str) -> bool:
+    normalized = _normalize(text)
+    return _PLUS_SIZE_RE.search(normalized) is not None or "大码" in normalized
+
+
+def apply_plus_size(rule: CategoryRule, text: str) -> CategoryRule:
+    """Return the Plus Size version of ``rule`` when ``text`` mentions plus size.
+
+    Idempotent: a rule that is already Plus Size is returned unchanged.
+    """
+    surcharge = _PLUS_SIZE_SURCHARGE.get(rule.primary)
+    if surcharge is None or rule.name.endswith(PLUS_SIZE_SUFFIX) or not is_plus_size(text):
         return rule
-    if rule.primary == "Women's Clothing":
-        return CategoryRule(rule.primary, f"{rule.name} (Plus Size)", rule.minimum + 2, rule.maximum + 5, rule.keywords)
-    if rule.primary == "Men's Clothing":
-        return CategoryRule(rule.primary, f"{rule.name} (Plus Size)", rule.minimum + 3, rule.maximum + 3, rule.keywords)
-    return rule
+    return CategoryRule(
+        rule.primary,
+        f"{rule.name}{PLUS_SIZE_SUFFIX}",
+        round(rule.minimum + surcharge[0], 2),
+        round(rule.maximum + surcharge[1], 2),
+        rule.keywords,
+    )
+
+
+def base_rule(rule: CategoryRule) -> CategoryRule:
+    """Undo apply_plus_size so price-range overrides can target the base rule."""
+    surcharge = _PLUS_SIZE_SURCHARGE.get(rule.primary)
+    if surcharge is None or not rule.name.endswith(PLUS_SIZE_SUFFIX):
+        return rule
+    return CategoryRule(
+        rule.primary,
+        rule.name[: -len(PLUS_SIZE_SUFFIX)],
+        round(rule.minimum - surcharge[0], 2),
+        round(rule.maximum - surcharge[1], 2),
+        rule.keywords,
+    )
+
+
+_apply_plus_size = apply_plus_size  # backwards-compatible name
 
 
 def classify_product(text: str) -> CategoryRule | None:
     normalized = _normalize(text)
+    explicit_primary = infer_primary_category(normalized)
     # A strong, unique subcategory phrase also determines its parent category.
     # This prevents words such as "Men's" in "Men's Necktie" from forcing the
     # product into Men's Clothing when the table places ties under Accessories.
     alias_matches = []
     rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
+    has_apparel_noun = any(_contains(normalized, noun) for noun in _APPAREL_NOUNS)
     for rule_id, aliases in ALIASES.items():
-        lengths = [len(_normalize(k)) for k in aliases if _contains(normalized, k)]
+        alias_rule = rules_by_id[rule_id]
+        if explicit_primary == "Footwear" and alias_rule.primary != "Footwear":
+            continue
+        lengths = [
+            len(_normalize(k)) for k in aliases
+            if _contains(normalized, k)
+            and not (has_apparel_noun and _normalize(k) in _WEAK_ALIASES)
+        ]
         if lengths:
-            alias_matches.append((max(lengths), rules_by_id[rule_id]))
+            alias_matches.append((max(lengths), alias_rule))
     if alias_matches:
         return _apply_plus_size(max(alias_matches, key=lambda item: item[0])[1], normalized)
-    primary = infer_primary_category(normalized)
+    primary = explicit_primary
     candidates = rules_for_primary(primary) if primary else CATEGORY_RULES
     matches = []
     for rule in candidates:
@@ -432,6 +539,13 @@ def has_category_conflict(text: str, rule: CategoryRule) -> bool:
     if is_women and not is_men and rule.primary == "Men's Clothing":
         return True
     if is_men and not is_women and rule.primary == "Women's Clothing":
+        return True
+    footwear_terms = (
+        "footwear", "shoe", "shoes", "sneaker", "sneakers", "trainer", "trainers",
+        "boot", "boots", "sandal", "sandals", "slipper", "slippers", "heel", "heels",
+        "loafer", "loafers", "skate shoe", "skate shoes", "跑鞋", "鞋", "靴子",
+    )
+    if any(_contains(normalized, word) for word in footwear_terms) and rule.primary != "Footwear":
         return True
     if any(_contains(normalized, word) for word in ("dress", "dresses", "连衣裙")) and rule.primary == "Footwear":
         return True

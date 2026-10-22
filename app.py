@@ -12,7 +12,7 @@ import streamlit as st
 
 from category_rules import CategoryRule, CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
-from exporter import export_csv
+from exporter import export_csv, verify_export
 from format_adapter import SHOPIFY, SUPPLIER, output_suffix, prepare_frame
 from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pricing
 from validator import validate_frame
@@ -44,7 +44,11 @@ def _prune_workspaces(store: dict[str, dict[str, object]]) -> None:
     for key in expired:
         store.pop(key, None)
     while len(store) > MAX_ACTIVE_WORKSPACES:
-        oldest = min(store, key=lambda key: float(store[key].get("updated", 0)))
+        # Evict empty workspaces (visitors who never uploaded anything, health
+        # checks, bots) before touching one that actually holds a batch.
+        empty = [key for key, value in store.items() if not any(value.get("files", {}).values())]
+        pool = empty or list(store)
+        oldest = min(pool, key=lambda key: float(store[key].get("updated", 0)))
         store.pop(oldest, None)
 
 
@@ -256,6 +260,10 @@ def _undo_last_change() -> str | None:
     workspace["custom_categories"] = dict(snapshot.get("custom_categories", {}))
     workspace["updated"] = time.time()
     return str(snapshot["label"])
+
+
+def _go_to_workflow_stage(stage: str) -> None:
+    st.session_state.workflow_stage = stage
 
 with st.sidebar:
     st.markdown("## +10 · JILL10 PRICING")
@@ -738,6 +746,13 @@ for file_index, uploaded in enumerate(uploaded_files):
                 text=f"自动识别完成度 {recognition_rate * 100:.1f}% · "
                 f"{priced_count} 个已定价，{unchanged_count} 个等待确认",
             )
+            if pricing_result.skipped_handles:
+                skipped_preview = "、".join(pricing_result.skipped_handles[:5])
+                st.warning(
+                    f"有 {len(pricing_result.skipped_handles)} 个商品的所有行价格都为空，无法定价，"
+                    f"已保持原样：{skipped_preview}"
+                    + (" 等" if len(pricing_result.skipped_handles) > 5 else "")
+                )
             if not unchanged_count:
                 st.markdown(
                     f'<div class="status-strip">已完成：{priced_count} 个商品全部识别并完成定价。</div>',
@@ -855,7 +870,21 @@ for file_index, uploaded in enumerate(uploaded_files):
                 else:
                     output_name = uploaded_name.rsplit(".", 1)[0] + output_suffix(file_format)
                     output_bytes = export_csv(pricing_result.frame, loaded, file_format)
+                    export_issues = verify_export(
+                        output_bytes,
+                        uploaded_data,
+                        loaded,
+                        pricing_result.frame,
+                        file_format,
+                        tuple(pricing_result.product_summary["Handle"].astype(str)),
+                    )
+                    if export_issues:
+                        needs_attention += 1
+                        st.error("导出文件复核未通过，已阻止下载，避免把错误文件带入店铺。")
+                        st.caption("；".join(export_issues))
+                        continue
                     completed_outputs.append((output_name, output_bytes))
+                    st.caption("✓ 导出复核通过：除价格列外的所有单元格与原文件完全一致，同一商品各变体价格一致。")
                     if pricing_result.unresolved_handles:
                         st.warning(
                             f"部分完成：{len(pricing_result.product_summary)} 个商品已修改，"
@@ -1203,6 +1232,29 @@ for file_index, uploaded in enumerate(uploaded_files):
 if workflow_stage == "② 检查识别":
     queue_cols[1].metric("识别完成", max(0, len(uploaded_files) - needs_attention))
     queue_cols[2].metric("需要确认", needs_attention)
+    st.markdown("---")
+    bottom_navigation = st.columns([1, 1])
+    current_upload_names = {_upload_name(uploaded) for uploaded in uploaded_files}
+    manually_marked_count = len(current_upload_names & st.session_state.manual_review_files)
+    correction_count = max(needs_attention, manually_marked_count)
+    if correction_count:
+        bottom_navigation[0].button(
+            f"前往 ③ 纠正异常 · {correction_count} 个产品包",
+            type="primary",
+            use_container_width=True,
+            on_click=_go_to_workflow_stage,
+            args=("③ 纠正异常",),
+        )
+        bottom_navigation[1].caption("已自动发现异常或存在你人工标记的产品包。")
+    else:
+        bottom_navigation[0].button(
+            "无需纠正，前往 ④ 下载结果",
+            type="primary",
+            use_container_width=True,
+            on_click=_go_to_workflow_stage,
+            args=("④ 下载结果",),
+        )
+        bottom_navigation[1].caption("当前批次全部识别并通过价格校验。")
 else:
     queue_cols[1].metric("已准备", len(completed_outputs))
     queue_cols[2].metric("待处理", needs_attention)

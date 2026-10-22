@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 
 import pandas as pd
 
-from category_rules import CategoryRule, classify_product, has_category_conflict, infer_similar_category, resolve_rule
+from category_rules import (
+    CategoryRule,
+    apply_plus_size,
+    base_rule,
+    classify_product,
+    has_category_conflict,
+    infer_similar_category,
+    resolve_rule,
+)
 from csv_loader import variant_mask
 
 
@@ -22,6 +31,9 @@ class PricingResult:
     product_summary: pd.DataFrame
     unresolved_handles: tuple[str, ...]
     expected_products: int
+    # Products whose every row has an empty price; they cannot be priced and
+    # are reported instead of being skipped silently.
+    skipped_handles: tuple[str, ...] = ()
 
 
 def parse_number(value: object) -> float | None:
@@ -31,9 +43,10 @@ def parse_number(value: object) -> float | None:
     if not text:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    return number if math.isfinite(number) else None
 
 
 def _stable_number(value: str) -> int:
@@ -64,6 +77,45 @@ def _compare_price(sale_price: float, discount_rate: float, rule: CategoryRule) 
         raise ValueError(f"{rule.name} 的区间无法同时满足售价、原价和 10%–20% 折扣规则。")
     target = sale_price / (1 - discount_rate)
     return min(candidates, key=lambda value: abs(value - target))
+
+
+def _assign_sale_prices(
+    handles: list[str],
+    usable_sales: tuple[float, ...],
+    category_id: str,
+) -> dict[str, float]:
+    """Give each product a price that depends only on its own Handle.
+
+    A product therefore keeps the same price when the batch around it changes.
+    Only when fewer than min(4, n) distinct prices result (hash collisions)
+    are the latest duplicates in hash order moved to unused price points.
+    """
+    assigned = {
+        handle: usable_sales[_stable_number(handle + "-price") % len(usable_sales)]
+        for handle in handles
+    }
+    target = min(4, len(handles))
+    if len(set(assigned.values())) >= target:
+        return assigned
+    seen: set[float] = set()
+    duplicates: list[str] = []
+    for handle in sorted(handles, key=_stable_number):
+        price = assigned[handle]
+        if price in seen:
+            duplicates.append(handle)
+        else:
+            seen.add(price)
+    free = sorted(
+        (price for price in usable_sales if price not in seen),
+        key=lambda price: _stable_number(f"{category_id}-{price}"),
+    )
+    for handle in duplicates:
+        if len(seen) >= target or not free:
+            break
+        price = free.pop(0)
+        assigned[handle] = price
+        seen.add(price)
+    return assigned
 
 
 def _product_text(group: pd.DataFrame) -> str:
@@ -185,6 +237,7 @@ def _apply_price_range_override(
     rule: CategoryRule,
     range_overrides: dict[str, dict[str, float]],
 ) -> CategoryRule:
+    """Apply a user-edited price range to a *base* (non Plus Size) rule."""
     custom = range_overrides.get(rule.rule_id)
     if not custom:
         return rule
@@ -197,7 +250,7 @@ def _apply_price_range_override(
     )
 
 
-def apply_fixed_pricing(
+def _compute_fixed_pricing(
     frame: pd.DataFrame,
     category_overrides: dict[str, str] | None = None,
     price_range_overrides: dict[str, dict[str, float]] | None = None,
@@ -215,23 +268,49 @@ def apply_fixed_pricing(
     custom_rules = custom_category_rules or ()
     category_decisions = _category_level_decisions(output, overrides, custom_rules)
     unresolved: list[str] = []
+    skipped: list[str] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     expected_products = 0
     group_keys = _product_group_keys(output)
-    for group_key, group in output.groupby(group_keys, sort=False, dropna=False):
-        original_handles = group["Handle"].astype(str).str.strip()
-        handle_text = next((value for value in original_handles if value), "")
-        if not handle_text:
-            titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
-            handle_text = next((value for value in titles if value), str(group_key))
-        indices = group.index[variants.loc[group.index]]
+
+    # Pre-extract the text columns once. Doing astype/strip per product group
+    # made large files very slow; groups are now plain lists of row positions.
+    def _clean_column(name: str) -> list[str]:
+        if name not in output.columns:
+            return [""] * len(output)
+        return output[name].astype(str).str.strip().tolist()
+
+    handle_col = _clean_column("Handle")
+    title_col = _clean_column("Title")
+    category_col = _clean_column("category")
+    tags_col = _clean_column("tags")
+    variant_flags = variants.to_numpy()
+    row_labels = output.index
+    positions_by_group: dict[object, list[int]] = {}
+    for position, key in enumerate(group_keys.tolist()):
+        positions_by_group.setdefault(key, []).append(position)
+
+    def _first(values: list[str], positions: list[int], default: str = "") -> str:
+        return next((values[i] for i in positions if values[i]), default)
+
+    def _group_text(positions: list[int]) -> str:
+        # Same fields as _product_text: category, Title, tags (never the description).
+        return " ".join(
+            values[i]
+            for values in (category_col, title_col, tags_col)
+            for i in positions
+            if values[i]
+        )
+
+    for group_key, positions in positions_by_group.items():
+        handle_text = _first(handle_col, positions) or _first(title_col, positions, str(group_key))
+        indices = row_labels[[i for i in positions if variant_flags[i]]]
         if len(indices) == 0:
+            skipped.append(handle_text)
             continue
         expected_products += 1
-        source_categories = group.get("category", pd.Series("", index=group.index)).astype(str).str.strip()
-        source_category = next((value for value in source_categories if value), "未提供分类")
-        titles = group.get("Title", pd.Series("", index=group.index)).astype(str).str.strip()
-        title = next((value for value in titles if value), "")
+        source_category = _first(category_col, positions, "未提供分类")
+        title = _first(title_col, positions)
         structured_text = f"{source_category} {title}"
         category_decision = category_decisions.get(source_category)
         product_override_rule = _resolve_available_rule(product_overrides.get(handle_text, ""), custom_rules)
@@ -253,9 +332,15 @@ def apply_fixed_pricing(
                 rule = _classify_custom_rule(title, custom_rules) or classify_product(title)
                 match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
             if rule is None:
-                rule, match_method = infer_similar_category(_product_text(group))
+                rule, match_method = infer_similar_category(_group_text(positions))
         if rule is not None:
-            rule = _apply_price_range_override(rule, range_overrides)
+            # Order matters: undo any Plus Size surcharge, apply the user's
+            # edited range to the base category, then add Plus Size back. This
+            # way range edits also reach Plus Size products, and a "Plus Size"
+            # mention in the title/tags is honoured even when the supplier
+            # category itself does not say so.
+            rule = _apply_price_range_override(base_rule(rule), range_overrides)
+            rule = apply_plus_size(rule, _group_text(positions))
         # A saved manual mapping is an explicit user decision and must outrank
         # automatic conflict heuristics. Otherwise a few titles inside the same
         # supplier category can be rejected even after the user confirms it.
@@ -277,23 +362,28 @@ def apply_fixed_pricing(
 
     assigned_prices: dict[str, float] = {}
     for items in by_category.values():
-        items.sort(key=lambda item: _stable_number(item[0]))
-        points = _price_points(items[0][2])
-        usable_sales = tuple(point for point in points if _valid_compare_prices(point, items[0][2]))
+        rule = items[0][2]
+        usable_sales = tuple(
+            point for point in _price_points(rule) if _valid_compare_prices(point, rule)
+        )
         if len(usable_sales) < min(4, len(items)):
-            raise ValueError(f"{items[0][2].name} 的价格区间不足以生成要求数量的不同售价。")
-        offset = _stable_number(items[0][2].name) % len(usable_sales)
-        for position, (handle, _, _, _, _) in enumerate(items):
-            assigned_prices[handle] = usable_sales[(offset + position) % len(usable_sales)]
+            raise ValueError(f"{rule.name} 的价格区间不足以生成要求数量的不同售价。")
+        assigned_prices.update(
+            _assign_sale_prices([item[0] for item in items], usable_sales, rule.rule_id)
+        )
 
     product_records: list[dict[str, object]] = []
+    write_index: list[object] = []
+    write_price: list[str] = []
+    write_compare: list[str] = []
     for handle, indices, rule, match_method, source_category in classified:
         sale_price = assigned_prices[handle]
         rate = DISCOUNT_RATES[_stable_number(handle + "-rate") % len(DISCOUNT_RATES)] if handle in discounted_handles else 0.0
         compare_price = _compare_price(sale_price, rate, rule) if rate else 0.0
 
-        output.loc[indices, "price"] = f"{sale_price:.2f}"
-        output.loc[indices, "compare_at_price"] = f"{compare_price:.2f}" if compare_price else "0"
+        write_index.extend(indices)
+        write_price.extend([f"{sale_price:.2f}"] * len(indices))
+        write_compare.extend([f"{compare_price:.2f}" if compare_price else "0"] * len(indices))
         product_records.append(
             {
                 "Handle": handle,
@@ -311,7 +401,86 @@ def apply_fixed_pricing(
             }
         )
 
-    return PricingResult(output, pd.DataFrame(product_records), tuple(unresolved), expected_products)
+    if write_index:
+        output.loc[write_index, "price"] = write_price
+        output.loc[write_index, "compare_at_price"] = write_compare
+
+    return PricingResult(
+        output,
+        pd.DataFrame(product_records),
+        tuple(unresolved),
+        expected_products,
+        tuple(skipped),
+    )
+
+
+# Streamlit re-runs the whole script on every click. Pricing is deterministic,
+# so identical inputs reuse the previous planned prices instead of recomputing.
+# Only the two small price columns and the summary are cached, not whole frames.
+_CACHE_LIMIT = 64
+_CACHE_COLUMNS = ("Handle", "Title", "category", "tags", "price", "compare_at_price", "sku_code")
+_pricing_cache: "OrderedDict[str, tuple[pd.Series, pd.Series, pd.DataFrame, tuple[str, ...], int, tuple[str, ...]]]" = OrderedDict()
+
+
+def _pricing_cache_key(frame, category_overrides, price_range_overrides, product_category_overrides, custom_rules) -> str:
+    digest = hashlib.sha256()
+    columns = [column for column in _CACHE_COLUMNS if column in frame.columns]
+    digest.update("\x1f".join(columns).encode("utf-8"))
+    digest.update(str(len(frame)).encode("ascii"))
+    if columns:
+        digest.update(pd.util.hash_pandas_object(frame[columns], index=True).to_numpy().tobytes())
+    digest.update(
+        json.dumps(
+            [
+                category_overrides or {},
+                price_range_overrides or {},
+                product_category_overrides or {},
+                [
+                    [rule.primary, rule.name, rule.minimum, rule.maximum, list(rule.keywords)]
+                    for rule in (custom_rules or ())
+                ],
+            ],
+            sort_keys=True,
+            default=str,
+            ensure_ascii=False,
+        ).encode("utf-8")
+    )
+    return digest.hexdigest()
+
+
+def apply_fixed_pricing(
+    frame: pd.DataFrame,
+    category_overrides: dict[str, str] | None = None,
+    price_range_overrides: dict[str, dict[str, float]] | None = None,
+    product_category_overrides: dict[str, str] | None = None,
+    custom_category_rules: tuple[CategoryRule, ...] | None = None,
+) -> PricingResult:
+    key = _pricing_cache_key(
+        frame, category_overrides, price_range_overrides, product_category_overrides, custom_category_rules
+    )
+    cached = _pricing_cache.get(key)
+    if cached is not None:
+        _pricing_cache.move_to_end(key)
+        price, compare, summary, unresolved, expected, skipped = cached
+        output = frame.copy(deep=True)
+        output["price"] = price.to_numpy()
+        output["compare_at_price"] = compare.to_numpy()
+        return PricingResult(output, summary.copy(), unresolved, expected, skipped)
+
+    result = _compute_fixed_pricing(
+        frame, category_overrides, price_range_overrides, product_category_overrides, custom_category_rules
+    )
+    _pricing_cache[key] = (
+        result.frame["price"].copy(),
+        result.frame["compare_at_price"].copy(),
+        result.product_summary.copy(),
+        result.unresolved_handles,
+        result.expected_products,
+        result.skipped_handles,
+    )
+    while len(_pricing_cache) > _CACHE_LIMIT:
+        _pricing_cache.popitem(last=False)
+    return result
 
 
 def validate_fixed_pricing(result: PricingResult) -> tuple[str, ...]:
