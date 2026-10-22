@@ -126,13 +126,17 @@ st.markdown(
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label { min-width:190px; justify-content:center; border:0; border-radius:11px; padding:11px 18px; box-shadow:none; background:transparent; }
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) { background:#15151A; }
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) * { color:#FFF; }
+    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) > div[role="radiogroup"] { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:4px 0 22px; }
+    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label { min-width:0; min-height:70px; align-items:center; justify-content:center; text-align:center; border-radius:15px; padding:12px; }
+    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label:has(input:checked) { background:#15151A; border-color:#15151A; box-shadow:0 12px 30px rgba(21,21,26,.15); }
+    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label:has(input:checked) * { color:#FFF; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:16px; padding:16px 20px; min-width:260px; box-shadow:0 8px 22px rgba(21,21,26,.035); transition:.2s; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label:hover { transform:translateY(-2px); border-color:var(--violet); }
     .stButton>button, .stDownloadButton>button { border-radius:12px; min-height:46px; font-weight:700; transition:transform .18s ease,box-shadow .18s ease; }
     .stButton>button:hover, .stDownloadButton>button:hover { transform:translateY(-2px); box-shadow:0 10px 25px rgba(21,21,26,.12); }
     .stButton>button[kind="primary"], .stDownloadButton>button { background:#15151A; color:#FFF; border:1px solid #15151A; }
     .stButton>button[kind="primary"]:hover, .stDownloadButton>button:hover { background:var(--violet); color:#FFF; border-color:var(--violet); }
-    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} }
+    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) > div[role="radiogroup"]{grid-template-columns:1fr 1fr} }
     </style>
     <div class="hero">
       <div class="brandline"><span class="brandmark">+10</span>JILL10 PRICING</div>
@@ -431,8 +435,16 @@ if navigation == "品类与价格规则":
                     st.error("自定义品类文件无法读取或内容不符合要求。")
     file_format = SUPPLIER
     new_uploads = None
+    workflow_stage = None
 else:
     st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>定价处理中心</h2></div><p>上传、识别、校正和导出集中在同一处理流程</p></div>', unsafe_allow_html=True)
+    workflow_stage = st.radio(
+        "处理步骤",
+        ["① 上传产品包", "② 检查识别", "③ 纠正异常", "④ 下载结果"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="workflow_stage",
+    )
     format_label = st.radio(
         "产品包格式",
         ["供应商原格式", "Shopify 格式"],
@@ -446,13 +458,16 @@ else:
         else "供应商 CSV：保留原始27列结构，只修改 price 与 compare_at_price。"
     )
     st.markdown(f'<div class="format-note">{format_help}</div>', unsafe_allow_html=True)
-    new_uploads = st.file_uploader(
-        "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
-        type=["csv"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-        key=f"product_csv_uploader_{file_format}",
-    )
+    if workflow_stage == "① 上传产品包":
+        new_uploads = st.file_uploader(
+            "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
+            type=["csv"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+            key=f"product_csv_uploader_{file_format}",
+        )
+    else:
+        new_uploads = None
 
 with st.expander(
     "编辑全部价格范围" if navigation == "品类与价格规则" else "快速修改价格范围",
@@ -580,25 +595,53 @@ if not uploaded_files:
         )
     st.stop()
 
-with st.expander("品类映射记忆（可选）"):
-    mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
-    if mapping_file is not None:
+if workflow_stage == "① 上传产品包":
+    st.markdown('<div class="section-kicker">Uploaded Files</div><div class="section-title">已上传产品包</div>', unsafe_allow_html=True)
+    upload_overview = []
+    for uploaded in uploaded_files:
         try:
-            mapping_bytes = mapping_file.getvalue()
-            mapping_digest = hashlib.sha256(mapping_bytes).hexdigest()
-            imported = json.loads(mapping_bytes.decode("utf-8"))
-            valid = {str(key): str(value) for key, value in imported.items() if _resolve_available_rule(str(value)) is not None}
-            if valid and st.session_state.get("last_mapping_import") != mapping_digest:
-                _record_change("导入品类映射")
-                st.session_state.learned_category_mappings.update(valid)
-                st.session_state.last_mapping_import = mapping_digest
-                workspace["mappings"] = dict(st.session_state.learned_category_mappings)
-                workspace["updated"] = time.time()
-                st.success(f"已导入 {len(valid)} 条品类映射。")
+            loaded_overview = load_csv_bytes(_upload_bytes(uploaded))
+            source_overview = prepare_frame(loaded_overview.frame, file_format)
+            summary_overview = validate_frame(source_overview)
+            upload_overview.append({
+                "文件名": _upload_name(uploaded),
+                "商品": summary_overview.products,
+                "数据行": summary_overview.rows,
+                "字段": len(source_overview.columns),
+                "状态": "可以处理" if not summary_overview.missing_columns else "缺少必要字段",
+            })
         except Exception:
-            st.error("映射文件无法读取。")
+            upload_overview.append({"文件名": _upload_name(uploaded), "商品": 0, "数据行": 0, "字段": 0, "状态": "读取失败"})
+    st.dataframe(pd.DataFrame(upload_overview), use_container_width=True, hide_index=True)
+    st.info("文件已保存在当前独立工作区。点击上方“② 检查识别”继续处理。")
+    st.stop()
 
-st.markdown('<div class="section-kicker">Batch Queue</div><div class="section-title">处理队列</div>', unsafe_allow_html=True)
+if workflow_stage == "③ 纠正异常":
+    with st.expander("品类映射记忆（可选）"):
+        mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
+        if mapping_file is not None:
+            try:
+                mapping_bytes = mapping_file.getvalue()
+                mapping_digest = hashlib.sha256(mapping_bytes).hexdigest()
+                imported = json.loads(mapping_bytes.decode("utf-8"))
+                valid = {str(key): str(value) for key, value in imported.items() if _resolve_available_rule(str(value)) is not None}
+                if valid and st.session_state.get("last_mapping_import") != mapping_digest:
+                    _record_change("导入品类映射")
+                    st.session_state.learned_category_mappings.update(valid)
+                    st.session_state.last_mapping_import = mapping_digest
+                    workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                    workspace["updated"] = time.time()
+                    st.success(f"已导入 {len(valid)} 条品类映射。")
+            except Exception:
+                st.error("映射文件无法读取。")
+
+stage_titles = {
+    "② 检查识别": ("File Tasks", "产品包任务"),
+    "③ 纠正异常": ("Exception Review", "集中处理异常商品"),
+    "④ 下载结果": ("Export Results", "下载处理结果"),
+}
+stage_kicker, stage_title = stage_titles.get(workflow_stage, ("Batch Queue", "处理队列"))
+st.markdown(f'<div class="section-kicker">{stage_kicker}</div><div class="section-title">{stage_title}</div>', unsafe_allow_html=True)
 queue_cols = st.columns(3)
 queue_cols[0].metric("已上传文件", len(uploaded_files))
 
@@ -608,7 +651,10 @@ needs_attention = 0
 for file_index, uploaded in enumerate(uploaded_files):
     uploaded_name = _upload_name(uploaded)
     uploaded_data = _upload_bytes(uploaded)
-    with st.expander(f"{file_index + 1:02d}  ·  {uploaded_name}", expanded=True):
+    with st.expander(
+        f"{file_index + 1:02d}  ·  {uploaded_name}",
+        expanded=workflow_stage in {"② 检查识别", "③ 纠正异常"},
+    ):
         try:
             loaded = load_csv_bytes(uploaded_data)
             source = prepare_frame(loaded.frame, file_format)
@@ -658,6 +704,53 @@ for file_index, uploaded in enumerate(uploaded_files):
                     f'<div class="status-strip">已完成：{priced_count} 个商品全部识别并完成定价。</div>',
                     unsafe_allow_html=True,
                 )
+
+            if workflow_stage == "② 检查识别":
+                task_issues = validate_fixed_pricing(pricing_result)
+                if task_issues:
+                    needs_attention += 1
+                    st.error("；".join(task_issues))
+                elif unchanged_count:
+                    needs_attention += 1
+                    st.warning(f"需要确认 {unchanged_count} 个商品。点击上方“③ 纠正异常”集中处理。")
+                else:
+                    st.success("自动识别和价格校验均已完成，可以进入下载步骤。")
+                continue
+
+            if workflow_stage == "④ 下载结果":
+                if "匹配方式" in pricing_result.product_summary.columns:
+                    download_similar = pricing_result.product_summary[
+                        pricing_result.product_summary["匹配方式"].astype(str).str.contains("语义匹配", regex=False)
+                    ]
+                else:
+                    download_similar = pricing_result.product_summary.copy()
+                download_confirmed = download_similar.empty or bool(st.session_state.get(f"confirm_{file_index}", False))
+                download_issues = validate_fixed_pricing(pricing_result)
+                if download_issues or not download_confirmed:
+                    needs_attention += 1
+                    st.error("此文件暂不能下载，请返回“③ 纠正异常”完成确认。")
+                    if download_issues:
+                        st.caption("；".join(download_issues))
+                else:
+                    output_name = uploaded_name.rsplit(".", 1)[0] + output_suffix(file_format)
+                    output_bytes = export_csv(pricing_result.frame, loaded, file_format)
+                    completed_outputs.append((output_name, output_bytes))
+                    if pricing_result.unresolved_handles:
+                        st.warning(
+                            f"部分完成：{len(pricing_result.product_summary)} 个商品已修改，"
+                            f"{len(pricing_result.unresolved_handles)} 个未识别商品保持原价。"
+                        )
+                    else:
+                        st.success("可以下载：全部商品已完成定价并通过校验。")
+                    st.download_button(
+                        f"下载 {output_name}",
+                        data=output_bytes,
+                        file_name=output_name,
+                        mime="text/csv",
+                        key=f"stage_download_{file_index}",
+                        use_container_width=True,
+                    )
+                continue
 
             # Manual correction is always available, even when automatic
             # classification succeeded. Mappings are stored by supplier category.
@@ -978,43 +1071,42 @@ for file_index, uploaded in enumerate(uploaded_files):
                 else:
                     st.success("此产品包已完成并通过校验。")
                 st.markdown(
-                    '<div class="download-panel"><h3>产品包可以下载</h3>'
-                    '<p>文件结构和非价格字段保持不变。未识别商品会保留原价格。</p></div>',
+                    '<div class="download-panel"><h3>此产品包已准备完成</h3>'
+                    '<p>如无其他异常需要处理，请点击上方“④ 下载结果”获取文件。</p></div>',
                     unsafe_allow_html=True,
-                )
-                st.download_button(
-                    f"下载 {output_name}",
-                    data=output_bytes,
-                    file_name=output_name,
-                    mime="text/csv",
-                    key=f"download_{file_index}",
-                    use_container_width=True,
                 )
         except Exception as exc:
             needs_attention += 1
             st.error(f"处理失败：{exc}")
 
-queue_cols[1].metric("已完成", len(completed_outputs))
-queue_cols[2].metric("待处理", needs_attention)
-
-st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
-if completed_outputs:
-    st.warning("批量下载得到的是 ZIP 压缩包，仅用于一次保存多个文件。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in completed_outputs:
-            archive.writestr(name, data)
-    st.download_button(
-        f"下载全部已完成产品包（ZIP，上传后台前需解压）· {len(completed_outputs)} 个",
-        data=zip_buffer.getvalue(),
-        file_name="正确价格产品包.zip",
-        mime="application/zip",
-        use_container_width=True,
-    )
+if workflow_stage == "② 检查识别":
+    queue_cols[1].metric("识别完成", max(0, len(uploaded_files) - needs_attention))
+    queue_cols[2].metric("需要确认", needs_attention)
 else:
-    st.info("完成品类确认和校验后，可在这里一次下载全部结果。")
+    queue_cols[1].metric("已准备", len(completed_outputs))
+    queue_cols[2].metric("待处理", needs_attention)
 
-if st.session_state.learned_category_mappings:
+if workflow_stage == "④ 下载结果":
+    st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
+    if completed_outputs:
+        st.warning("批量下载得到的是 ZIP 压缩包，仅用于一次保存多个文件。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in completed_outputs:
+                archive.writestr(name, data)
+        st.download_button(
+            f"下载全部已完成产品包（ZIP，上传后台前需解压）· {len(completed_outputs)} 个",
+            data=zip_buffer.getvalue(),
+            file_name="正确价格产品包.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+    else:
+        st.info("目前没有可以下载的文件，请返回“③ 纠正异常”完成确认。")
+elif workflow_stage == "③ 纠正异常":
+    st.info("完成异常确认后，点击上方“④ 下载结果”获取单个 CSV 或批量 ZIP。")
+
+if workflow_stage == "③ 纠正异常" and st.session_state.learned_category_mappings:
     st.download_button(
         "保存品类映射文件",
         data=json.dumps(st.session_state.learned_category_mappings, ensure_ascii=False, indent=2).encode("utf-8"),
