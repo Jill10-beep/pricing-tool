@@ -126,17 +126,20 @@ st.markdown(
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label { min-width:190px; justify-content:center; border:0; border-radius:11px; padding:11px 18px; box-shadow:none; background:transparent; }
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) { background:#15151A; }
     main div[data-testid="stRadio"]:has(input[value="定价处理中心"]) label:has(input:checked) * { color:#FFF; }
-    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) > div[role="radiogroup"] { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:4px 0 22px; }
-    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label { min-width:0; min-height:70px; align-items:center; justify-content:center; text-align:center; border-radius:15px; padding:12px; }
-    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label:has(input:checked) { background:#15151A; border-color:#15151A; box-shadow:0 12px 30px rgba(21,21,26,.15); }
-    main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) label:has(input:checked) * { color:#FFF; }
+    .st-key-workflow_cards div[role="radiogroup"] { display:grid !important; grid-template-columns:repeat(4,1fr); gap:10px !important; margin:4px 0 22px; }
+    .st-key-workflow_cards label[data-baseweb="radio"] { min-width:0 !important; min-height:86px; display:flex !important; align-items:center; justify-content:center; text-align:center; border:1px solid var(--line); border-radius:16px; padding:14px !important; background:rgba(255,255,255,.88); box-shadow:0 7px 20px rgba(21,21,26,.04); transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease; }
+    .st-key-workflow_cards label[data-baseweb="radio"]:hover { transform:translateY(-3px); border-color:var(--violet); box-shadow:0 14px 32px rgba(21,21,26,.09); }
+    .st-key-workflow_cards label[data-baseweb="radio"] > div:first-child { display:none !important; }
+    .st-key-workflow_cards label[data-baseweb="radio"]:has(input:checked) { background:#15151A !important; border-color:#15151A; box-shadow:0 14px 34px rgba(21,21,26,.16); }
+    .st-key-workflow_cards label[data-baseweb="radio"]:has(input:checked) * { color:#FFF !important; }
+    .st-key-workflow_cards label[data-baseweb="radio"] p { font-size:14px; font-weight:700; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:16px; padding:16px 20px; min-width:260px; box-shadow:0 8px 22px rgba(21,21,26,.035); transition:.2s; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label:hover { transform:translateY(-2px); border-color:var(--violet); }
     .stButton>button, .stDownloadButton>button { border-radius:12px; min-height:46px; font-weight:700; transition:transform .18s ease,box-shadow .18s ease; }
     .stButton>button:hover, .stDownloadButton>button:hover { transform:translateY(-2px); box-shadow:0 10px 25px rgba(21,21,26,.12); }
     .stButton>button[kind="primary"], .stDownloadButton>button { background:#15151A; color:#FFF; border:1px solid #15151A; }
     .stButton>button[kind="primary"]:hover, .stDownloadButton>button:hover { background:var(--violet); color:#FFF; border-color:var(--violet); }
-    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} main div[data-testid="stRadio"]:has(input[value="① 上传产品包"]) > div[role="radiogroup"]{grid-template-columns:1fr 1fr} }
+    @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} .st-key-workflow_cards div[role="radiogroup"]{grid-template-columns:1fr 1fr !important} }
     </style>
     <div class="hero">
       <div class="brandline"><span class="brandmark">+10</span>JILL10 PRICING</div>
@@ -168,6 +171,7 @@ workspace = store.setdefault(
         "product_mappings": {},
         "price_ranges": {},
         "custom_categories": {},
+        "manual_review_files": [],
         "history": [],
         "updated": time.time(),
     },
@@ -184,6 +188,8 @@ if "product_category_mappings" not in st.session_state:
     st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
 if "custom_category_rules" not in st.session_state:
     st.session_state.custom_category_rules = dict(workspace.get("custom_categories", {}))
+if "manual_review_files" not in st.session_state:
+    st.session_state.manual_review_files = set(workspace.get("manual_review_files", []))
 
 
 def _custom_rule_objects() -> tuple[CategoryRule, ...]:
@@ -438,13 +444,14 @@ if navigation == "品类与价格规则":
     workflow_stage = None
 else:
     st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>定价处理中心</h2></div><p>上传、识别、校正和导出集中在同一处理流程</p></div>', unsafe_allow_html=True)
-    workflow_stage = st.radio(
-        "处理步骤",
-        ["① 上传产品包", "② 检查识别", "③ 纠正异常", "④ 下载结果"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="workflow_stage",
-    )
+    with st.container(key="workflow_cards"):
+        workflow_stage = st.radio(
+            "处理步骤",
+            ["① 上传产品包", "② 检查识别", "③ 纠正异常", "④ 下载结果"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="workflow_stage",
+        )
     format_label = st.radio(
         "产品包格式",
         ["供应商原格式", "Shopify 格式"],
@@ -635,6 +642,36 @@ if workflow_stage == "③ 纠正异常":
             except Exception:
                 st.error("映射文件无法读取。")
 
+review_file_indices: set[int] = set()
+if workflow_stage == "③ 纠正异常":
+    for review_index, review_upload in enumerate(uploaded_files):
+        try:
+            review_loaded = load_csv_bytes(_upload_bytes(review_upload))
+            review_source = prepare_frame(review_loaded.frame, file_format)
+            review_result = apply_fixed_pricing(
+                review_source,
+                st.session_state.learned_category_mappings,
+                st.session_state.price_range_overrides,
+                st.session_state.product_category_mappings,
+                _custom_rule_objects(),
+            )
+            review_similar = (
+                review_result.product_summary["匹配方式"].astype(str).str.contains("语义匹配", regex=False).any()
+                if "匹配方式" in review_result.product_summary.columns else False
+            )
+            if (
+                review_result.unresolved_handles
+                or review_similar
+                or _upload_name(review_upload) in st.session_state.manual_review_files
+            ):
+                review_file_indices.add(review_index)
+        except Exception:
+            continue
+    if not review_file_indices:
+        st.success("无需要纠正的产品。当前批次没有未识别、低置信度或人工标记的商品。")
+        st.caption("如果你在“② 检查识别”中发现自动识别错误，可以点击“识别有误，加入纠正”。")
+        st.stop()
+
 stage_titles = {
     "② 检查识别": ("File Tasks", "产品包任务"),
     "③ 纠正异常": ("Exception Review", "集中处理异常商品"),
@@ -649,6 +686,8 @@ completed_outputs: list[tuple[str, bytes]] = []
 needs_attention = 0
 
 for file_index, uploaded in enumerate(uploaded_files):
+    if workflow_stage == "③ 纠正异常" and file_index not in review_file_indices:
+        continue
     uploaded_name = _upload_name(uploaded)
     uploaded_data = _upload_bytes(uploaded)
     with st.expander(
@@ -704,6 +743,16 @@ for file_index, uploaded in enumerate(uploaded_files):
                     f'<div class="status-strip">已完成：{priced_count} 个商品全部识别并完成定价。</div>',
                     unsafe_allow_html=True,
                 )
+            if workflow_stage == "③ 纠正异常" and uploaded_name in st.session_state.manual_review_files:
+                if st.button(
+                    "此文件已检查完成，从纠正列表移除",
+                    key=f"finish_manual_review_{file_index}",
+                    use_container_width=True,
+                ):
+                    st.session_state.manual_review_files.discard(uploaded_name)
+                    workspace["manual_review_files"] = sorted(st.session_state.manual_review_files)
+                    workspace["updated"] = time.time()
+                    st.rerun()
 
             if workflow_stage == "② 检查识别":
                 task_issues = validate_fixed_pricing(pricing_result)
@@ -715,6 +764,27 @@ for file_index, uploaded in enumerate(uploaded_files):
                     st.warning(f"需要确认 {unchanged_count} 个商品。点击上方“③ 纠正异常”集中处理。")
                 else:
                     st.success("自动识别和价格校验均已完成，可以进入下载步骤。")
+                if uploaded_name in st.session_state.manual_review_files:
+                    st.info("此产品包已人工加入“③ 纠正异常”。")
+                    if st.button(
+                        "取消人工纠正标记",
+                        key=f"remove_review_{file_index}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.manual_review_files.discard(uploaded_name)
+                        workspace["manual_review_files"] = sorted(st.session_state.manual_review_files)
+                        workspace["updated"] = time.time()
+                        st.rerun()
+                elif st.button(
+                    "识别有误，加入纠正",
+                    key=f"add_review_{file_index}",
+                    use_container_width=True,
+                ):
+                    st.session_state.manual_review_files.add(uploaded_name)
+                    workspace["manual_review_files"] = sorted(st.session_state.manual_review_files)
+                    workspace["updated"] = time.time()
+                    st.toast("已加入纠正步骤")
+                    st.rerun()
                 continue
 
             if workflow_stage == "④ 下载结果":
