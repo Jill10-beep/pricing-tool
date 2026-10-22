@@ -764,6 +764,57 @@ for file_index, uploaded in enumerate(uploaded_files):
                     st.warning(f"需要确认 {unchanged_count} 个商品。点击上方“③ 纠正异常”集中处理。")
                 else:
                     st.success("自动识别和价格校验均已完成，可以进入下载步骤。")
+                task_result_tab, task_changes_tab = st.tabs(["商品定价结果", "价格字段变化"])
+                with task_result_tab:
+                    if pricing_result.product_summary.empty:
+                        st.info("此产品包没有生成可定价商品。")
+                    else:
+                        task_visible = pricing_result.product_summary.drop(
+                            columns=["区间下限", "区间上限"],
+                            errors="ignore",
+                        ).reset_index(drop=True)
+                        task_search = st.text_input(
+                            "搜索定价结果",
+                            placeholder="输入 Handle、原始分类或识别品类",
+                            key=f"task_search_{file_index}",
+                        ).strip().casefold()
+                        if task_search:
+                            task_search_columns = [
+                                column for column in ["Handle", "原始分类", "一级品类", "识别品类", "匹配方式"]
+                                if column in task_visible.columns
+                            ]
+                            task_mask = pd.Series(False, index=task_visible.index)
+                            for column in task_search_columns:
+                                task_mask |= task_visible[column].fillna("").astype(str).str.casefold().str.contains(
+                                    task_search, regex=False
+                                )
+                            task_visible = task_visible[task_mask]
+                        st.caption(
+                            f"显示 {len(task_visible)} / {len(pricing_result.product_summary)} 个商品。"
+                            "重点检查原始分类、识别品类、新售价和新划线价。"
+                        )
+                        st.dataframe(
+                            task_visible,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(460, 78 + max(1, len(task_visible)) * 35),
+                        )
+                with task_changes_tab:
+                    task_preview = build_change_preview(source, pricing_result.frame)
+                    task_preview.insert(1, "商品名称", display_titles(source).loc[task_preview.index])
+                    task_changed_only = st.toggle(
+                        "只看价格发生变化的记录",
+                        value=True,
+                        key=f"task_changed_only_{file_index}",
+                    )
+                    task_shown = task_preview[task_preview["发生变化"]] if task_changed_only else task_preview
+                    st.dataframe(
+                        task_shown,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=360,
+                    )
+                st.caption("如果表格中的品类识别不正确，将此产品包加入第三步后，即可多选错误商品并批量修改品类。")
                 if uploaded_name in st.session_state.manual_review_files:
                     st.info("此产品包已人工加入“③ 纠正异常”。")
                     if st.button(
