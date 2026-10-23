@@ -954,27 +954,32 @@ for file_index, uploaded in enumerate(uploaded_files):
                         st.rerun()
 
             if pricing_result.unresolved_handles:
-                unresolved_rows = source[source["Handle"].astype(str).isin(pricing_result.unresolved_handles)]
-                categories = sorted(value for value in unresolved_rows["category"].astype(str).str.strip().unique() if value)
+                details = pd.DataFrame(list(pricing_result.unresolved_details))
+                if details.empty:
+                    details = pd.DataFrame({
+                        "Handle": list(pricing_result.unresolved_handles),
+                        "商品名称": list(pricing_result.unresolved_handles),
+                        "原始分类": "",
+                        "原售价": "",
+                        "SKU数量": "",
+                    })
                 st.warning(
                     f"有 {len(pricing_result.unresolved_handles)} 个商品暂时无法识别。"
                     "这些商品会保持原价格不变，其余商品照常修改并允许下载。"
-                    "你也可以在下面选择参考品类后重新处理。"
+                    "请在下面为它们选择参考品类，保存后会立即重新定价。"
                 )
-                selected_mappings = {}
-                for category in categories:
-                    category_rows = unresolved_rows[unresolved_rows["category"].astype(str).str.strip() == category]
-                    category_titles = display_titles(source).loc[category_rows.index]
-                    product_details = category_rows.assign(商品名称=category_titles.values).groupby(
-                        "Handle", sort=False, dropna=False
-                    ).agg(
-                        商品名称=("商品名称", "first"),
-                        原始分类=("category", "first"),
-                        原售价=("price", "first"),
-                        SKU数量=("price", "size"),
-                    ).reset_index()
+                # Products with a supplier category are fixed once per category.
+                # Products WITHOUT one (empty category) cannot be grouped that
+                # way, so they are fixed per product and remembered by Handle.
+                unresolved_groups = list(details.groupby("原始分类", sort=True, dropna=False))
+                group_rules: dict[str, str] = {}
+                for category, product_details in unresolved_groups:
+                    category = "" if pd.isna(category) else str(category)
+                    by_product = category == ""
+                    group_label = "（未提供原始分类）" if by_product else category
+                    widget_key = "blank" if by_product else category
                     with st.expander(
-                        f"查看未识别商品 · {category}（{len(product_details)} 个）",
+                        f"未识别商品 · {group_label}（{len(product_details)} 个）",
                         expanded=True,
                     ):
                         st.dataframe(
@@ -983,9 +988,13 @@ for file_index, uploaded in enumerate(uploaded_files):
                             hide_index=True,
                             height=min(420, 72 + len(product_details) * 35),
                         )
-                        st.caption("下面选择的参考品类会应用到这张表中的所有商品。")
+                        st.caption(
+                            "这些商品没有原始分类，下面选择的品类会应用到这张表中的每个商品，并按商品单独记住。"
+                            if by_product
+                            else "下面选择的参考品类会应用到这张表中的所有商品。"
+                        )
                     sample_titles = " ".join(product_details["商品名称"].astype(str).head(12))
-                    candidates = rank_similar_categories(f"{category} {sample_titles}", 3)
+                    candidates = rank_similar_categories(f"{category} {sample_titles}".strip(), 3)
                     if candidates:
                         st.caption("智能候选（只供参考，确认后才定价）")
                         st.dataframe(
@@ -1001,35 +1010,44 @@ for file_index, uploaded in enumerate(uploaded_files):
                     # Explicit supplier-category evidence outranks fuzzy title
                     # similarity (for example, "Men's ... Vests" must not be
                     # preselected as bedding because a title says "quilted").
-                    suggested_primary = infer_primary_category(category)
+                    suggested_primary = infer_primary_category(category) if category else None
                     if not suggested_primary and candidates:
                         suggested_primary = candidates[0][0].primary
                     primary_options = ["请选择"] + list(PRIMARY_CATEGORIES)
                     primary_index = primary_options.index(suggested_primary) if suggested_primary in primary_options else 0
                     primary = st.selectbox(
-                        f"{category}：先选择一级品类",
+                        f"{group_label}：先选择一级品类",
                         primary_options,
                         index=primary_index,
-                        key=f"primary_{file_index}_{category}",
+                        key=f"primary_{file_index}_{widget_key}",
                     )
                     if primary != "请选择":
                         candidate_rules = _rules_for_available_primary(primary)
                         labels = [f"{rule.name}（${rule.minimum:.2f}–${rule.maximum:.2f}）" for rule in candidate_rules]
                         selection = st.selectbox(
-                            f"{category}：参考哪个具体品类？",
+                            f"{group_label}：参考哪个具体品类？",
                             ["请选择"] + labels,
-                            key=f"rule_{file_index}_{category}",
+                            key=f"rule_{file_index}_{widget_key}",
                         )
                         if selection != "请选择":
-                            selected_mappings[category] = candidate_rules[labels.index(selection)].rule_id
-                if categories and st.button(
+                            group_rules[category] = candidate_rules[labels.index(selection)].rule_id
+                if st.button(
                     "保存映射并重新处理",
                     key=f"save_map_{file_index}",
-                    disabled=len(selected_mappings) != len(categories),
+                    disabled=len(group_rules) != len(unresolved_groups),
+                    use_container_width=True,
                 ):
-                    _record_change(f"确认未识别品类 · {len(selected_mappings)} 项")
-                    st.session_state.learned_category_mappings.update(selected_mappings)
+                    _record_change(f"确认未识别商品 · {len(pricing_result.unresolved_handles)} 个")
+                    for category, product_details in unresolved_groups:
+                        category = "" if pd.isna(category) else str(category)
+                        rule_id = group_rules[category]
+                        if category:
+                            st.session_state.learned_category_mappings[category] = rule_id
+                        else:
+                            for handle in product_details["Handle"].astype(str):
+                                st.session_state.product_category_mappings[handle] = rule_id
                     workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                    workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
                     workspace["updated"] = time.time()
                     st.rerun()
 

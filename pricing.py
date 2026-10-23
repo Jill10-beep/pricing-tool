@@ -37,6 +37,10 @@ class PricingResult:
     # Products whose every row has an empty price; they cannot be priced and
     # are reported instead of being skipped silently.
     skipped_handles: tuple[str, ...] = ()
+    # One record per unresolved product: Handle, 商品名称, 原始分类 ("" when the
+    # supplier gave none), 原售价, SKU数量. Products without a category cannot be
+    # fixed per category, so the UI needs them individually.
+    unresolved_details: tuple[dict[str, object], ...] = ()
 
 
 def parse_number(value: object) -> float | None:
@@ -272,6 +276,7 @@ def _compute_fixed_pricing(
     category_decisions = _category_level_decisions(output, overrides, custom_rules)
     unresolved: list[str] = []
     skipped: list[str] = []
+    unresolved_details: list[dict[str, object]] = []
     classified: list[tuple[str, pd.Index, CategoryRule, str, str]] = []
     expected_products = 0
     group_keys = _product_group_keys(output)
@@ -287,6 +292,7 @@ def _compute_fixed_pricing(
     title_col = _clean_column("Title")
     category_col = _clean_column("category")
     tags_col = _clean_column("tags")
+    price_col = _clean_column("price")
     variant_flags = variants.to_numpy()
     row_labels = output.index
     positions_by_group: dict[object, list[int]] = {}
@@ -371,6 +377,14 @@ def _compute_fixed_pricing(
             override_rule is None and not title_corrected and has_category_conflict(conflict_text, rule)
         ):
             unresolved.append(handle_text)
+            row_positions = [i for i in positions if variant_flags[i]]
+            unresolved_details.append({
+                "Handle": handle_text,
+                "商品名称": title or handle_text,
+                "原始分类": _first(category_col, positions),
+                "原售价": _first(price_col, row_positions),
+                "SKU数量": len(row_positions),
+            })
         else:
             classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))
 
@@ -435,6 +449,7 @@ def _compute_fixed_pricing(
         tuple(unresolved),
         expected_products,
         tuple(skipped),
+        tuple(unresolved_details),
     )
 
 
@@ -443,7 +458,7 @@ def _compute_fixed_pricing(
 # Only the two small price columns and the summary are cached, not whole frames.
 _CACHE_LIMIT = 64
 _CACHE_COLUMNS = ("Handle", "Title", "category", "tags", "price", "compare_at_price", "sku_code")
-_pricing_cache: "OrderedDict[str, tuple[pd.Series, pd.Series, pd.DataFrame, tuple[str, ...], int, tuple[str, ...]]]" = OrderedDict()
+_pricing_cache: "OrderedDict[str, tuple[pd.Series, pd.Series, pd.DataFrame, tuple[str, ...], int, tuple[str, ...], tuple[dict[str, object], ...]]]" = OrderedDict()
 
 
 def _pricing_cache_key(frame, category_overrides, price_range_overrides, product_category_overrides, custom_rules) -> str:
@@ -485,11 +500,11 @@ def apply_fixed_pricing(
     cached = _pricing_cache.get(key)
     if cached is not None:
         _pricing_cache.move_to_end(key)
-        price, compare, summary, unresolved, expected, skipped = cached
+        price, compare, summary, unresolved, expected, skipped, details = cached
         output = frame.copy(deep=True)
         output["price"] = price.to_numpy()
         output["compare_at_price"] = compare.to_numpy()
-        return PricingResult(output, summary.copy(), unresolved, expected, skipped)
+        return PricingResult(output, summary.copy(), unresolved, expected, skipped, details)
 
     result = _compute_fixed_pricing(
         frame, category_overrides, price_range_overrides, product_category_overrides, custom_category_rules
@@ -501,6 +516,7 @@ def apply_fixed_pricing(
         result.unresolved_handles,
         result.expected_products,
         result.skipped_handles,
+        result.unresolved_details,
     )
     while len(_pricing_cache) > _CACHE_LIMIT:
         _pricing_cache.popitem(last=False)

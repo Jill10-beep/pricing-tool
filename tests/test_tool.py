@@ -471,6 +471,29 @@ class StorageProductTests(unittest.TestCase):
         self.assertEqual(set(result.product_summary["识别品类"]), {"Socks"})
 
 
+class UnresolvedProductTests(unittest.TestCase):
+    def test_unresolved_products_without_category_are_listed_and_can_be_fixed_per_product(self):
+        frame = pd.DataFrame([
+            row("ok1", "Women's Dress", "Women's Dresses", "10", "0", "A", ""),
+            row("odd1", "Zzyzx Gizmo One", "", "12.50", "0", "B", ""),
+            row("odd2", "Zzyzx Gizmo Two", "", "13.50", "0", "C", ""),
+        ])
+        result = apply_fixed_pricing(frame)
+        self.assertEqual(set(result.unresolved_handles), {"odd1", "odd2"})
+        details = {item["Handle"]: item for item in result.unresolved_details}
+        self.assertEqual(details["odd1"]["原始分类"], "")
+        self.assertEqual(details["odd1"]["商品名称"], "Zzyzx Gizmo One")
+        self.assertEqual(details["odd1"]["原售价"], "12.50")
+        self.assertEqual(details["odd1"]["SKU数量"], 1)
+
+        fixed = apply_fixed_pricing(
+            frame, product_category_overrides={"odd1": "Kitchen and Storage::Storage Boxes", "odd2": "Kitchen and Storage::Storage Boxes"}
+        )
+        self.assertEqual(fixed.unresolved_handles, ())
+        self.assertEqual(fixed.unresolved_details, ())
+        self.assertEqual(set(fixed.product_summary["Handle"]), {"ok1", "odd1", "odd2"})
+
+
 SHOPIFY_SAMPLE = (
     "Handle,Title,Body (HTML),Type,Variant SKU,Variant Price,Variant Compare At Price,Image Src\n"
     'dress-a,Women\'s Dress A,"<p style=""color:red;"">Soft; warm; cozy</p>",Dresses,A1,19.99,,https://x.com/a.jpg\n'
