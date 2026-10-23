@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from category_rules import CategoryRule, apply_plus_size, base_rule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
+from category_rules import CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
 from exporter import export_csv, verify_export
 from format_adapter import SHOPIFY, prepare_frame
@@ -428,6 +428,47 @@ class RegressionTests(unittest.TestCase):
         self.assertIsNone(parse_number("nan"))
         self.assertIsNone(parse_number("inf"))
         self.assertEqual(parse_number("$1,234.50"), 1234.5)
+
+
+class StorageProductTests(unittest.TestCase):
+    """A storage product is priced as storage, not as the thing it stores."""
+
+    def test_storage_titles_are_classified_by_the_container(self):
+        for title in ["Sock Storage Box", "Socks Organizer", "Bra Storage Box", "Tie Storage Box",
+                      "Belt Rack", "Sunglasses Organizer", "Jewelry Box", "Underwear Storage Bag",
+                      "袜子收纳箱", "内衣收纳盒"]:
+            with self.subTest(title=title):
+                self.assertEqual(classify_product(title).primary, "Kitchen and Storage")
+        self.assertEqual(classify_product("Women's Sock Drawer Organizer").name, "Drawer Organizers")
+
+    def test_real_clothing_and_furniture_are_not_affected(self):
+        for title in ["Men's Cotton Socks", "Men's Silk Necktie", "Women's Tie Front Dress"]:
+            with self.subTest(title=title):
+                self.assertNotEqual(classify_product(title).primary if classify_product(title) else "", "Kitchen and Storage")
+        self.assertFalse(is_storage_product("Storage Bed Frame"))
+        self.assertFalse(is_storage_product("Storage Ottoman"))
+        self.assertTrue(is_storage_product("Under Bed Storage Box"))
+
+    def test_storage_product_filed_under_a_clothing_category_is_corrected_and_flagged(self):
+        frame = pd.DataFrame([
+            row("a", "Cotton Crew Socks 5 Pack", "Socks", "10", "0", "A", ""),
+            row("b", "Foldable Sock Storage Box", "Socks", "10", "0", "B", ""),
+            row("c", "Bamboo Socks", "Socks", "10", "0", "C", ""),
+        ])
+        summary = apply_fixed_pricing(frame).product_summary.set_index("Handle")
+        self.assertEqual(summary.loc["a", "识别品类"], "Socks")
+        self.assertEqual(summary.loc["c", "识别品类"], "Socks")
+        self.assertEqual(summary.loc["b", "识别品类"], "Storage Boxes")
+        self.assertIn("语义匹配", summary.loc["b", "匹配方式"])  # surfaces in the review step
+        self.assertTrue(14.99 <= summary.loc["b", "新售价"] <= 39.99)
+
+    def test_a_category_the_user_mapped_by_hand_is_not_second_guessed(self):
+        frame = pd.DataFrame([
+            row("b", "Foldable Sock Storage Box", "Socks", "10", "0", "B", ""),
+            row("a", "Cotton Crew Socks", "Socks", "10", "0", "A", ""),
+        ])
+        result = apply_fixed_pricing(frame, category_overrides={"Socks": "Jewelry and Accessories::Socks"})
+        self.assertEqual(set(result.product_summary["识别品类"]), {"Socks"})
 
 
 SHOPIFY_SAMPLE = (

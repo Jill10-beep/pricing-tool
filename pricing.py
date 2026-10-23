@@ -13,8 +13,11 @@ from category_rules import (
     CategoryRule,
     apply_plus_size,
     base_rule,
+    STORAGE_CONTENT_PRIMARIES,
     classify_product,
+    classify_storage_product,
     has_category_conflict,
+    is_storage_product,
     infer_similar_category,
     resolve_rule,
 )
@@ -313,6 +316,7 @@ def _compute_fixed_pricing(
         title = _first(title_col, positions)
         structured_text = f"{source_category} {title}"
         category_decision = category_decisions.get(source_category)
+        title_corrected = False
         product_override_rule = _resolve_available_rule(product_overrides.get(handle_text, ""), custom_rules)
         override_rule = product_override_rule or (
             category_decision[0] if category_decision and category_decision[2] else None
@@ -321,7 +325,25 @@ def _compute_fixed_pricing(
             rule = product_override_rule
             match_method = f"单个商品人工纠正：{product_override_rule.primary} → {product_override_rule.name}"
         elif category_decision:
-            rule, match_method, _ = category_decision
+            rule, match_method, category_is_manual = category_decision
+            # The supplier category is decided once for the whole category, so
+            # a product filed in the wrong category (a sock storage box under
+            # "Socks") would be priced as its contents. Read the title too: a
+            # storage title inside a clothing/accessory category is re-assigned
+            # to storage and marked for review. A category the user mapped by
+            # hand is never second-guessed.
+            if (
+                not category_is_manual
+                and (rule is None or rule.primary in STORAGE_CONTENT_PRIMARIES)
+                and is_storage_product(title)
+            ):
+                original = f"{rule.primary} → {rule.name}" if rule else "未识别"
+                rule = classify_storage_product(title)
+                match_method = (
+                    f"语义匹配·标题纠正：标题含收纳类词，原始分类按 {original} 识别，"
+                    f"已改为 {rule.primary} → {rule.name}"
+                )
+                title_corrected = True
         else:
             # Only products without a supplier category may fall back to their
             # own title. A populated supplier category is always decided once
@@ -345,7 +367,9 @@ def _compute_fixed_pricing(
         # automatic conflict heuristics. Otherwise a few titles inside the same
         # supplier category can be rejected even after the user confirms it.
         conflict_text = structured_text if category_decision is None else source_category
-        if rule is None or (override_rule is None and has_category_conflict(conflict_text, rule)):
+        if rule is None or (
+            override_rule is None and not title_corrected and has_category_conflict(conflict_text, rule)
+        ):
             unresolved.append(handle_text)
         else:
             classified.append((handle_text, indices, rule, match_method or "直接匹配", source_category))

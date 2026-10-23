@@ -416,9 +416,73 @@ def base_rule(rule: CategoryRule) -> CategoryRule:
 _apply_plus_size = apply_plus_size  # backwards-compatible name
 
 
+# --- Storage products -------------------------------------------------------
+# "Sock Storage Box", "Belt Rack" or "Bra Organizer" are storage products even
+# though the title contains the name of the thing being stored. The product
+# type is the container, not its contents, so these are priced as storage.
+# Primary categories whose items can be stored; a storage title inside one of
+# these categories is almost certainly mis-filed (e.g. a sock box under Socks).
+STORAGE_CONTENT_PRIMARIES = (
+    "Women's Clothing",
+    "Men's Clothing",
+    "Underwear, Sleepwear and Swimwear",
+    "Footwear",
+    "Jewelry and Accessories",
+    "Bags",
+)
+_STORAGE_INTENT_RE = re.compile(
+    r"(?<![a-z0-9])(?:storage|organi[sz]ers?|organi[sz]ing)(?![a-z0-9])"
+    r"|收纳|整理箱|整理盒|整理袋|置物|衣架|挂架"
+)
+_STORED_ITEMS = (
+    r"(?:socks?|underwear|panties|bras?|hats?|caps?|ties|ties?|neckties?|belts?|scarf|scarves|"
+    r"jewelry|jewellery|necklaces?|earrings?|watch(?:es)?|sunglasses|glasses|shoes?|sneakers?|"
+    r"boots?|shirts?|clothes|clothing|pants|jeans|dress(?:es)?|handbags?|purses?)"
+)
+_STORED_CONTAINERS = r"(?:racks?|hangers?|holders?|stands?|box(?:es)?|baskets?|drawers?|dividers?|bins?)"
+_STORED_PAIR_RE = re.compile(
+    rf"(?<![a-z0-9]){_STORED_ITEMS}\s+(?:[a-z0-9]+\s+)?{_STORED_CONTAINERS}(?![a-z0-9])"
+)
+# Real furniture that merely offers storage ("Storage Bed", "Storage Ottoman")
+# is not a storage accessory and keeps going through the normal rules.
+_FURNITURE_RE = re.compile(
+    r"(?<![a-z0-9])(?:(?:storage|platform|bunk)\s+beds?|bed\s+(?:frame|base|with)|ottomans?|benches|bench|"
+    r"cabinets?|bookcases?|bookshelf|dressers?|sofas?|couch|(?:coffee|side|dining|console)\s+tables?|"
+    r"desks?|chairs?|nightstands?)(?![a-z0-9])|床架"
+)
+
+
+def is_storage_product(text: str) -> bool:
+    normalized = _normalize(text)
+    if not normalized or _FURNITURE_RE.search(normalized):
+        return False
+    return bool(_STORAGE_INTENT_RE.search(normalized) or _STORED_PAIR_RE.search(normalized))
+
+
+def classify_storage_product(text: str) -> CategoryRule:
+    """Pick the most specific Kitchen and Storage rule; default Storage Boxes."""
+    normalized = _normalize(text)
+    best: tuple[int, CategoryRule] | None = None
+    for rule in CATEGORY_RULES:
+        if rule.primary != "Kitchen and Storage":
+            continue
+        words = (*rule.keywords, *ALIASES.get(rule.rule_id, ()))
+        lengths = [len(_normalize(word)) for word in words if _contains(normalized, word)]
+        if lengths and (best is None or max(lengths) > best[0]):
+            best = (max(lengths), rule)
+    if best is not None:
+        return best[1]
+    return next(rule for rule in CATEGORY_RULES if rule.rule_id == "Kitchen and Storage::Storage Boxes")
+
+
 def classify_product(text: str) -> CategoryRule | None:
     normalized = _normalize(text)
     explicit_primary = infer_primary_category(normalized)
+    if explicit_primary in (None, *STORAGE_CONTENT_PRIMARIES) and is_storage_product(normalized):
+        return classify_storage_product(normalized)
+    # Already a storage-type title (e.g. Chinese "收纳"): use the normal rules
+    # first and only fall back to the generic storage rule if none matches.
+    storage_fallback = explicit_primary == "Kitchen and Storage" and is_storage_product(normalized)
     # A strong, unique subcategory phrase also determines its parent category.
     # This prevents words such as "Men's" in "Men's Necktie" from forcing the
     # product into Men's Clothing when the table places ties under Accessories.
@@ -445,7 +509,9 @@ def classify_product(text: str) -> CategoryRule | None:
         lengths = [len(_normalize(k)) for k in rule.keywords if _contains(normalized, k)]
         if lengths:
             matches.append((max(lengths), rule))
-    return _apply_plus_size(max(matches, key=lambda item: item[0])[1], normalized) if matches else None
+    if matches:
+        return _apply_plus_size(max(matches, key=lambda item: item[0])[1], normalized)
+    return classify_storage_product(normalized) if storage_fallback else None
 
 
 def _rule_document(rule: CategoryRule) -> str:

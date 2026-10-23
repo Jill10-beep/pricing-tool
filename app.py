@@ -18,7 +18,7 @@ from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pr
 from validator import validate_frame
 
 
-st.set_page_config(page_title="JILL10 PRICING", page_icon="➕", layout="wide")
+st.set_page_config(page_title="JILL10 PRICING", page_icon="➕", layout="wide", initial_sidebar_state="expanded")
 
 WORKSPACE_TTL_SECONDS = 6 * 60 * 60
 MAX_ACTIVE_WORKSPACES = 50
@@ -71,9 +71,14 @@ st.markdown(
           var(--paper);
         color: var(--ink);
     }
-    .block-container { max-width: 1480px; padding-top: 1.2rem; padding-bottom: 5rem; }
+    .block-container { max-width: 1480px; padding-top: 3.4rem; padding-bottom: 5rem; }
     html, body, [class*="css"] { font-family: "DM Sans", "Noto Sans SC", sans-serif; }
-    #MainMenu, footer, header { visibility: hidden; }
+    /* Hide Streamlit's menu/footer/toolbar but KEEP the header itself: the arrow
+       that re-opens a collapsed sidebar lives inside it. */
+    #MainMenu, footer { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent; }
+    [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { visibility: hidden; }
+    [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapseButton"] { visibility: visible; }
 
     .hero {
         position: relative; overflow: hidden; padding: 38px 42px; border-radius: 24px;
