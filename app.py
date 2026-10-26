@@ -83,11 +83,13 @@ st.markdown(
     .hero {
         position: relative; overflow: hidden; padding: 38px 42px; border-radius: 24px;
         background: #15151A; box-shadow: 0 22px 65px rgba(21,21,26,.18); margin-bottom: 18px;
+        animation: heroIn .55s cubic-bezier(.2,.8,.2,1) both;
     }
-    .hero:before { content:""; position:absolute; width:270px; height:270px; right:8%; top:-170px; background:var(--violet); border-radius:50%; filter:blur(3px); opacity:.65; }
-    .hero:after { content:""; position:absolute; width:180px; height:180px; right:-45px; bottom:-105px; background:var(--lime); border-radius:48% 52% 58% 42%; transform:rotate(24deg); }
+    .hero:before { content:""; position:absolute; width:270px; height:270px; right:8%; top:-170px; background:var(--violet); border-radius:50%; filter:blur(3px); opacity:.65; animation:orbFloat 8s ease-in-out infinite; }
+    .hero:after { content:""; position:absolute; width:180px; height:180px; right:-45px; bottom:-105px; background:var(--lime); border-radius:48% 52% 58% 42%; transform:rotate(24deg); animation:shapeTurn 12s ease-in-out infinite alternate; }
     .brandline { position:relative; z-index:1; display:flex; align-items:center; gap:10px; color:#FFF; font-weight:700; font-size:13px; letter-spacing:.08em; }
-    .brandmark { display:inline-grid; place-items:center; width:34px; height:34px; border-radius:11px; background:var(--lime); color:#15151A; font-weight:700; transform:rotate(-7deg); letter-spacing:-.05em; }
+    .brandmark { display:inline-grid; place-items:center; width:34px; height:34px; border-radius:11px; background:var(--lime); color:#15151A; font-weight:700; transform:rotate(-7deg); letter-spacing:-.05em; transition:transform .25s ease, border-radius .25s ease; }
+    .hero:hover .brandmark { transform:rotate(0deg) scale(1.08); border-radius:50%; }
     .eyebrow { position:relative; z-index:1; color:var(--cyan); font-size:11px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; margin-top:30px; }
     .hero h1 { position:relative; z-index:1; color:#FFF; font-size:39px; line-height:1.08; margin:8px 0 11px; letter-spacing:-.045em; }
     .hero p { position:relative; z-index:1; color:#B9B7C4; max-width:760px; margin:0; font-size:15px; line-height:1.75; }
@@ -112,16 +114,26 @@ st.markdown(
     .page-head p { margin:0; color:var(--muted); font-size:14px; }
     .format-note { background:rgba(255,255,255,.82); border:1px solid var(--line); border-left:4px solid var(--cyan); border-radius:14px; padding:16px 18px; margin:8px 0 14px; color:var(--muted); }
     .status-strip { background:rgba(201,255,69,.20); border:1px solid #B9D96B; border-radius:14px; padding:14px 17px; color:#34500A; font-weight:600; margin:12px 0; }
+    .stage-banner { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:15px 18px; margin:-9px 0 18px; border:1px solid var(--line); border-radius:15px; background:rgba(255,255,255,.78); animation:softIn .35s ease both; }
+    .stage-banner-main { display:flex; align-items:center; gap:11px; min-width:0; }
+    .stage-pulse { width:10px; height:10px; flex:0 0 auto; border-radius:50%; background:var(--violet); box-shadow:0 0 0 0 rgba(121,92,255,.36); animation:pulse 2s infinite; }
+    .stage-banner strong { display:block; color:var(--ink); font-size:14px; }
+    .stage-banner span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+    .stage-count { flex:0 0 auto; padding:7px 11px; border-radius:999px; background:#15151A; color:#FFF !important; font-weight:700; font-size:11px !important; margin:0 !important; }
+    .scroll-top { position:fixed; right:24px; bottom:22px; z-index:999; width:43px; height:43px; display:grid; place-items:center; border-radius:14px; background:#15151A; color:#FFF !important; text-decoration:none !important; box-shadow:0 12px 30px rgba(21,21,26,.22); transition:transform .2s ease,background .2s ease; }
+    .scroll-top:hover { transform:translateY(-4px) rotate(-3deg); background:var(--violet); }
 
     div[data-testid="stFileUploader"] { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:13px 18px 5px; }
     div[data-testid="stFileUploaderDropzone"] { border:1px dashed var(--violet); background:rgba(121,92,255,.035); border-radius:14px; }
-    div[data-testid="stMetric"] { background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:16px; padding:17px 18px; box-shadow:0 8px 22px rgba(21,21,26,.04); }
+    div[data-testid="stMetric"] { background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:16px; padding:17px 18px; box-shadow:0 8px 22px rgba(21,21,26,.04); transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease; }
+    div[data-testid="stMetric"]:hover { transform:translateY(-3px); border-color:#BBAEFF; box-shadow:0 14px 30px rgba(21,21,26,.08); }
     div[data-testid="stMetricLabel"] { color:var(--muted); }
     div[data-testid="stMetricValue"] { color:var(--ink); font-size:27px; }
     div[data-testid="stProgress"] > div > div > div { background:linear-gradient(90deg,var(--violet),var(--cyan),var(--lime)); }
     div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:15px; overflow:hidden; background:#FFF; }
     div[data-testid="stAlert"] { border-radius:12px; border-width:1px; }
-    div[data-testid="stExpander"] { background:rgba(255,255,255,.82); border:1px solid var(--line); border-radius:15px; }
+    div[data-testid="stExpander"] { background:rgba(255,255,255,.82); border:1px solid var(--line); border-radius:15px; transition:border-color .2s ease,box-shadow .2s ease; }
+    div[data-testid="stExpander"]:hover { border-color:#C9C0F8; box-shadow:0 10px 28px rgba(21,21,26,.055); }
     div[data-testid="stTabs"] button { font-weight:600; }
     section[data-testid="stSidebar"] { background:#15151A; border-right:0; }
     section[data-testid="stSidebar"] * { color:#F7F5FF; }
@@ -140,6 +152,7 @@ st.markdown(
     .st-key-workflow_cards label[data-baseweb="radio"]:hover { transform:translateY(-3px); border-color:var(--violet); box-shadow:0 14px 32px rgba(21,21,26,.09); }
     .st-key-workflow_cards label[data-baseweb="radio"] > div:first-child { display:none !important; }
     .st-key-workflow_cards label[data-baseweb="radio"]:has(input:checked) { background:#15151A !important; border-color:#15151A; box-shadow:0 14px 34px rgba(21,21,26,.16); }
+    .st-key-workflow_cards label[data-baseweb="radio"]:has(input:checked):after { content:"当前"; position:absolute; top:8px; right:9px; padding:3px 7px; border-radius:999px; background:var(--lime); color:#15151A; font-size:9px; font-weight:800; letter-spacing:.06em; }
     .st-key-workflow_cards label[data-baseweb="radio"]:has(input:checked) * { color:#FFF !important; }
     .st-key-workflow_cards label[data-baseweb="radio"] p { font-size:14px; font-weight:700; }
     main div[data-testid="stRadio"] > div[role="radiogroup"] label { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:16px; padding:16px 20px; min-width:260px; box-shadow:0 8px 22px rgba(21,21,26,.035); transition:.2s; }
@@ -148,8 +161,15 @@ st.markdown(
     .stButton>button:hover, .stDownloadButton>button:hover { transform:translateY(-2px); box-shadow:0 10px 25px rgba(21,21,26,.12); }
     .stButton>button[kind="primary"], .stDownloadButton>button { background:#15151A; color:#FFF; border:1px solid #15151A; }
     .stButton>button[kind="primary"]:hover, .stDownloadButton>button:hover { background:var(--violet); color:#FFF; border-color:var(--violet); }
+    @keyframes heroIn { from{opacity:0;transform:translateY(12px) scale(.992)} to{opacity:1;transform:none} }
+    @keyframes softIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+    @keyframes orbFloat { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-24px,18px) scale(1.08)} }
+    @keyframes shapeTurn { from{transform:rotate(24deg) translate(0,0)} to{transform:rotate(42deg) translate(-14px,-8px)} }
+    @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(121,92,255,.38)} 70%{box-shadow:0 0 0 9px rgba(121,92,255,0)} 100%{box-shadow:0 0 0 0 rgba(121,92,255,0)} }
+    @media (prefers-reduced-motion:reduce) { *,*:before,*:after { animation-duration:.01ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; } }
     @media(max-width:800px){ .hero{padding:30px 25px}.hero h1{font-size:31px}.stepbar{grid-template-columns:1fr 1fr}.empty-grid{grid-template-columns:1fr}.page-head{align-items:flex-start;flex-direction:column} .st-key-workflow_cards div[role="radiogroup"]{grid-template-columns:1fr 1fr !important} }
     </style>
+    <div id="jill10-top"></div>
     <div class="hero">
       <div class="brandline"><span class="brandmark">+10</span>JILL10 PRICING</div>
       <div class="eyebrow">Pricing Workspace</div>
@@ -162,6 +182,7 @@ st.markdown(
       <div class="step"><b>03</b><strong>复核异常商品</strong>批量校正低置信度结果</div>
       <div class="step"><b>04</b><strong>导出处理结果</strong>保留结构并更新价格字段</div>
     </div>
+    <a class="scroll-top" href="#jill10-top" title="返回顶部" aria-label="返回顶部">↑</a>
     """,
     unsafe_allow_html=True,
 )
@@ -590,8 +611,29 @@ if new_uploads:
         {"name": item.name, "data": item.getvalue()} for item in new_uploads
     ]
     workspace["updated"] = time.time()
+    upload_fingerprint = hashlib.sha256(
+        b"".join(item.getvalue() for item in new_uploads)
+    ).hexdigest()
+    if st.session_state.get("last_upload_feedback") != upload_fingerprint:
+        st.session_state.last_upload_feedback = upload_fingerprint
+        st.toast(f"已安全保存 {len(new_uploads)} 个产品包", icon="✅")
 
 uploaded_files = list(workspace["files"].get(file_format, []))
+
+if workflow_stage:
+    stage_messages = {
+        "① 上传产品包": ("建立本次处理批次", "支持一次上传多个 CSV，文件会保留在当前独立工作区。"),
+        "② 检查识别": ("检查自动识别结果", "搜索、浏览商品并将可疑产品包加入纠正步骤。"),
+        "③ 纠正异常": ("集中处理需要确认的商品", "未识别和人工标记的项目会集中显示，不影响其他商品。"),
+        "④ 下载结果": ("导出已经完成的文件", "可单独下载 CSV，也可将多个结果一次打包下载。"),
+    }
+    stage_heading, stage_copy = stage_messages[workflow_stage]
+    st.markdown(
+        f'<div class="stage-banner"><div class="stage-banner-main"><i class="stage-pulse"></i>'
+        f'<div><strong>{stage_heading}</strong><span>{stage_copy}</span></div></div>'
+        f'<span class="stage-count">{len(uploaded_files)} 个文件</span></div>',
+        unsafe_allow_html=True,
+    )
 
 if uploaded_files:
     st.success(f"当前批次已保留 {len(uploaded_files)} 个产品包。普通页面刷新不会丢失；应用重启或重新部署后需重新上传。")
@@ -1300,7 +1342,21 @@ if workflow_stage == "④ 下载结果":
     else:
         st.info("目前没有可以下载的文件，请返回“③ 纠正异常”完成确认。")
 elif workflow_stage == "③ 纠正异常":
-    st.info("完成异常确认后，点击上方“④ 下载结果”获取单个 CSV 或批量 ZIP。")
+    st.markdown("---")
+    correction_navigation = st.columns([1, 1])
+    correction_navigation[0].button(
+        "返回 ② 检查识别",
+        use_container_width=True,
+        on_click=_go_to_workflow_stage,
+        args=("② 检查识别",),
+    )
+    correction_navigation[1].button(
+        "完成纠正，前往 ④ 下载结果",
+        type="primary",
+        use_container_width=True,
+        on_click=_go_to_workflow_stage,
+        args=("④ 下载结果",),
+    )
 
 if workflow_stage == "③ 纠正异常" and st.session_state.learned_category_mappings:
     st.download_button(
