@@ -176,12 +176,6 @@ st.markdown(
       <h1>产品包批量定价与结果校验</h1>
       <p>系统自动完成品类识别、价格计算和异常检查，并在不改变原始文件结构的前提下生成可直接使用的新产品包。</p>
     </div>
-    <div class="stepbar">
-      <div class="step"><b>01</b><strong>上传产品包</strong>选择普通或 Shopify 格式</div>
-      <div class="step"><b>02</b><strong>识别商品品类</strong>自动匹配相似品类与价格</div>
-      <div class="step"><b>03</b><strong>复核异常商品</strong>批量校正低置信度结果</div>
-      <div class="step"><b>04</b><strong>导出处理结果</strong>保留结构并更新价格字段</div>
-    </div>
     <a class="scroll-top" href="#jill10-top" title="返回顶部" aria-label="返回顶部">↑</a>
     """,
     unsafe_allow_html=True,
@@ -477,15 +471,8 @@ if navigation == "品类与价格规则":
     new_uploads = None
     workflow_stage = None
 else:
-    st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>定价处理中心</h2></div><p>上传、识别、校正和导出集中在同一处理流程</p></div>', unsafe_allow_html=True)
-    with st.container(key="workflow_cards"):
-        workflow_stage = st.radio(
-            "处理步骤",
-            ["① 上传产品包", "② 检查识别", "③ 纠正异常", "④ 下载结果"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="workflow_stage",
-        )
+    st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>单页定价工作台</h2></div><p>上传、检查、纠正和下载都在当前页面完成</p></div>', unsafe_allow_html=True)
+    workflow_stage = "单页工作台"
     format_label = st.radio(
         "产品包格式",
         ["供应商原格式", "Shopify 格式"],
@@ -499,16 +486,13 @@ else:
         else "供应商 CSV：保留原始27列结构，只修改 price 与 compare_at_price。"
     )
     st.markdown(f'<div class="format-note">{format_help}</div>', unsafe_allow_html=True)
-    if workflow_stage == "① 上传产品包":
-        new_uploads = st.file_uploader(
-            "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
-            type=["csv"],
-            accept_multiple_files=True,
-            label_visibility="collapsed",
-            key=f"product_csv_uploader_{file_format}",
-        )
-    else:
-        new_uploads = None
+    new_uploads = st.file_uploader(
+        "上传 Shopify CSV" if file_format == SHOPIFY else "上传供应商产品 CSV",
+        type=["csv"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key=f"product_csv_uploader_{file_format}",
+    )
 
 with st.expander(
     "编辑全部价格范围" if navigation == "品类与价格规则" else "快速修改价格范围",
@@ -626,6 +610,7 @@ if workflow_stage:
         "② 检查识别": ("检查自动识别结果", "搜索、浏览商品并将可疑产品包加入纠正步骤。"),
         "③ 纠正异常": ("集中处理需要确认的商品", "未识别和人工标记的项目会集中显示，不影响其他商品。"),
         "④ 下载结果": ("导出已经完成的文件", "可单独下载 CSV，也可将多个结果一次打包下载。"),
+        "单页工作台": ("当前批次自动处理", "向下展开产品包即可检查识别、纠正品类并下载结果。"),
     }
     stage_heading, stage_copy = stage_messages[workflow_stage]
     st.markdown(
@@ -678,7 +663,7 @@ if workflow_stage == "① 上传产品包":
     st.info("文件已保存在当前独立工作区。点击上方“② 检查识别”继续处理。")
     st.stop()
 
-if workflow_stage == "③ 纠正异常":
+if workflow_stage == "单页工作台":
     with st.expander("品类映射记忆（可选）"):
         mapping_file = st.file_uploader("导入以前保存的品类映射", type=["json"], key="mapping_json")
         if mapping_file is not None:
@@ -731,6 +716,7 @@ stage_titles = {
     "② 检查识别": ("File Tasks", "产品包任务"),
     "③ 纠正异常": ("Exception Review", "集中处理异常商品"),
     "④ 下载结果": ("Export Results", "下载处理结果"),
+    "单页工作台": ("Batch Workspace", "产品包处理结果"),
 }
 stage_kicker, stage_title = stage_titles.get(workflow_stage, ("Batch Queue", "处理队列"))
 st.markdown(f'<div class="section-kicker">{stage_kicker}</div><div class="section-title">{stage_title}</div>', unsafe_allow_html=True)
@@ -747,7 +733,7 @@ for file_index, uploaded in enumerate(uploaded_files):
     uploaded_data = _upload_bytes(uploaded)
     with st.expander(
         f"{file_index + 1:02d}  ·  {uploaded_name}",
-        expanded=workflow_stage in {"② 检查识别", "③ 纠正异常"},
+        expanded=file_index == 0,
     ):
         try:
             loaded = load_csv_bytes(uploaded_data)
@@ -1277,6 +1263,19 @@ for file_index, uploaded in enumerate(uploaded_files):
             else:
                 output_name = uploaded_name.rsplit(".", 1)[0] + output_suffix(file_format)
                 output_bytes = export_csv(pricing_result.frame, loaded, file_format)
+                export_issues = verify_export(
+                    output_bytes,
+                    uploaded_data,
+                    loaded,
+                    pricing_result.frame,
+                    file_format,
+                    tuple(pricing_result.product_summary["Handle"].astype(str)),
+                )
+                if export_issues:
+                    needs_attention += 1
+                    st.error("导出文件复核未通过，已阻止下载，避免把错误文件带入店铺。")
+                    st.caption("；".join(export_issues))
+                    continue
                 completed_outputs.append((output_name, output_bytes))
                 if pricing_result.unresolved_handles:
                     st.warning(
@@ -1287,8 +1286,16 @@ for file_index, uploaded in enumerate(uploaded_files):
                     st.success("此产品包已完成并通过校验。")
                 st.markdown(
                     '<div class="download-panel"><h3>此产品包已准备完成</h3>'
-                    '<p>如无其他异常需要处理，请点击上方“④ 下载结果”获取文件。</p></div>',
+                    '<p>导出复核已经通过，可以直接下载此产品包。</p></div>',
                     unsafe_allow_html=True,
+                )
+                st.download_button(
+                    f"下载 {output_name}",
+                    data=output_bytes,
+                    file_name=output_name,
+                    mime="text/csv",
+                    key=f"single_page_download_{file_index}",
+                    use_container_width=True,
                 )
         except Exception as exc:
             needs_attention += 1
@@ -1324,6 +1331,25 @@ else:
     queue_cols[1].metric("已准备", len(completed_outputs))
     queue_cols[2].metric("待处理", needs_attention)
 
+if workflow_stage == "单页工作台":
+    st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">全部处理结果</div>', unsafe_allow_html=True)
+    if completed_outputs:
+        st.warning("批量下载得到的是 ZIP 压缩包。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in completed_outputs:
+                archive.writestr(name, data)
+        st.download_button(
+            f"下载全部已完成产品包（ZIP）· {len(completed_outputs)} 个",
+            data=zip_buffer.getvalue(),
+            file_name="正确价格产品包.zip",
+            mime="application/zip",
+            key="single_page_batch_download",
+            use_container_width=True,
+        )
+    else:
+        st.info("目前没有通过校验、可以下载的产品包。请展开上面的文件查看提示并完成确认。")
+
 if workflow_stage == "④ 下载结果":
     st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
     if completed_outputs:
@@ -1358,7 +1384,7 @@ elif workflow_stage == "③ 纠正异常":
         args=("④ 下载结果",),
     )
 
-if workflow_stage == "③ 纠正异常" and st.session_state.learned_category_mappings:
+if workflow_stage in {"③ 纠正异常", "单页工作台"} and st.session_state.learned_category_mappings:
     st.download_button(
         "保存品类映射文件",
         data=json.dumps(st.session_state.learned_category_mappings, ensure_ascii=False, indent=2).encode("utf-8"),

@@ -104,6 +104,29 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(classify_product("Unisex Western Cowboy Boots").rule_id, "Footwear::Boots")
         self.assertEqual(infer_primary_category("Men's, Top, Vests"), "Men's Clothing")
 
+    def test_sock_sets_are_socks_not_womens_clothing_sets(self):
+        examples = (
+            "Women's Cotton Socks Set",
+            "Womens 5 Pack Crew Socks",
+            "女士袜子套装",
+            "Women's, Accessories, Socks",
+        )
+        for text in examples:
+            with self.subTest(text=text):
+                rule = classify_product(text)
+                self.assertIsNotNone(rule)
+                self.assertEqual(rule.rule_id, "Jewelry and Accessories::Socks")
+                self.assertEqual((rule.minimum, rule.maximum), (9.99, 16.99))
+
+    def test_watch_bands_have_their_own_price_range(self):
+        for text in ("Apple Watch Band", "Smartwatch Strap", "手表表带"):
+            with self.subTest(text=text):
+                rule = classify_product(text)
+                self.assertIsNotNone(rule)
+                self.assertEqual(rule.rule_id, "Jewelry and Accessories::Watch Bands")
+                self.assertEqual((rule.minimum, rule.maximum), (8.99, 18.99))
+        self.assertEqual(classify_product("Women's Gold Watch").rule_id, "Jewelry and Accessories::Watches")
+
     def test_local_similarity_returns_candidates_and_is_conservative(self):
         candidates = rank_similar_categories("electric coffee grinder", 3)
         self.assertEqual(candidates[0][0].rule_id, "Kitchen and Storage::Kitchen Tools")

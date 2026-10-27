@@ -86,6 +86,7 @@ Jewelry and Accessories|Jewelry Sets|14.99|24.99
 Jewelry and Accessories|Anklets|6.99|12.99
 Jewelry and Accessories|Brooches|8.99|16.99
 Jewelry and Accessories|Watches|29.99|59.99
+Jewelry and Accessories|Watch Bands|8.99|18.99
 Jewelry and Accessories|Sunglasses|14.99|24.99
 Jewelry and Accessories|Hats|14.99|24.99
 Jewelry and Accessories|Caps|14.99|24.99
@@ -201,6 +202,9 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "Underwear, Sleepwear and Swimwear::Panties (Multipacks)": ("panties", "panty", "women's panties", "womens panties", "女士内裤"),
     "Underwear, Sleepwear and Swimwear::Bras": ("bra", "bras", "bralette", "bralettes", "sports bra", "wireless bra", "文胸", "胸罩", "内衣上装"),
     "Jewelry and Accessories::Ties": ("necktie", "neckties", "neck tie", "knit tie", "bow tie", "tie", "ties", "领带", "领结"),
+    "Jewelry and Accessories::Socks": ("sock", "socks", "sock set", "socks set", "sock pack", "socks pack", "袜子", "袜子套装", "袜子组合"),
+    "Jewelry and Accessories::Watch Bands": ("watch band", "watch bands", "watch strap", "watch straps", "smartwatch band", "smartwatch strap", "表带", "手表表带", "智能手表表带"),
+    "Jewelry and Accessories::Watches": ("watch", "watches", "wristwatch", "wrist watch", "手表", "腕表"),
     "Home Decor and Bedding::Furniture": ("furniture", "chair", "sofa", "cabinet", "shelf", "家具", "椅子", "沙发"),
     "Men's Clothing::Shirts": ("men shirt", "men's shirt", "mens shirt", "男衬衫"),
     "Men's Clothing::Polo Shirts": ("men polo", "men's polo", "mens polo", "polo shirt", "男polo"),
@@ -478,16 +482,25 @@ def classify_storage_product(text: str) -> CategoryRule:
 def classify_product(text: str) -> CategoryRule | None:
     normalized = _normalize(text)
     explicit_primary = infer_primary_category(normalized)
-    if explicit_primary in (None, *STORAGE_CONTENT_PRIMARIES) and is_storage_product(normalized):
+    storage_product = is_storage_product(normalized)
+    if storage_product:
         return classify_storage_product(normalized)
-    # Already a storage-type title (e.g. Chinese "收纳"): use the normal rules
-    # first and only fall back to the generic storage rule if none matches.
-    storage_fallback = explicit_primary == "Kitchen and Storage" and is_storage_product(normalized)
+    # Product nouns outrank packaging words and gender departments. For
+    # example, "Women's Socks Set" is a set of socks, not a Women's Clothing
+    # outfit. Keep these highly specific locks before generic alias matching.
+    strong_product_nouns = (
+        ("Jewelry and Accessories::Watch Bands", ("watch band", "watch bands", "watch strap", "watch straps", "smartwatch band", "smartwatch strap", "手表表带", "智能手表表带", "表带")),
+        ("Jewelry and Accessories::Watches", ("watch", "watches", "wristwatch", "wrist watch", "手表", "腕表")),
+        ("Jewelry and Accessories::Socks", ("sock", "socks", "袜子")),
+    )
+    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
+    for rule_id, nouns in strong_product_nouns:
+        if any(_contains(normalized, noun) for noun in nouns):
+            return rules_by_id[rule_id]
     # A strong, unique subcategory phrase also determines its parent category.
     # This prevents words such as "Men's" in "Men's Necktie" from forcing the
     # product into Men's Clothing when the table places ties under Accessories.
     alias_matches = []
-    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
     has_apparel_noun = any(_contains(normalized, noun) for noun in _APPAREL_NOUNS)
     for rule_id, aliases in ALIASES.items():
         alias_rule = rules_by_id[rule_id]
@@ -511,7 +524,7 @@ def classify_product(text: str) -> CategoryRule | None:
             matches.append((max(lengths), rule))
     if matches:
         return _apply_plus_size(max(matches, key=lambda item: item[0])[1], normalized)
-    return classify_storage_product(normalized) if storage_fallback else None
+    return None
 
 
 def _rule_document(rule: CategoryRule) -> str:
