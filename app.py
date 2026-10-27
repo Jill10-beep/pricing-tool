@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from io import BytesIO
+from pathlib import Path
 import time
 import uuid
 import zipfile
@@ -22,6 +24,8 @@ st.set_page_config(page_title="JILL10 PRICING", page_icon="➕", layout="wide", 
 
 WORKSPACE_TTL_SECONDS = 6 * 60 * 60
 MAX_ACTIVE_WORKSPACES = 50
+CATBOT_ASSET = Path(__file__).resolve().parent / "assets" / "j10-catbot.png"
+CATBOT_DATA_URL = "data:image/png;base64," + base64.b64encode(CATBOT_ASSET.read_bytes()).decode("ascii")
 
 
 @st.cache_resource
@@ -120,8 +124,10 @@ st.markdown(
     .stage-banner strong { display:block; color:var(--ink); font-size:14px; }
     .stage-banner span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
     .stage-count { flex:0 0 auto; padding:7px 11px; border-radius:999px; background:#15151A; color:#FFF !important; font-weight:700; font-size:11px !important; margin:0 !important; }
-    .scroll-top { position:fixed; right:24px; bottom:22px; z-index:999; width:43px; height:43px; display:grid; place-items:center; border-radius:14px; background:#15151A; color:#FFF !important; text-decoration:none !important; box-shadow:0 12px 30px rgba(21,21,26,.22); transition:transform .2s ease,background .2s ease; }
-    .scroll-top:hover { transform:translateY(-4px) rotate(-3deg); background:var(--violet); }
+    .scroll-top { position:fixed; left:50%; bottom:72px; z-index:999; width:66px; height:66px; display:block; transform:translateX(-50%); text-decoration:none !important; filter:drop-shadow(0 12px 15px rgba(21,21,26,.22)); transition:transform .24s cubic-bezier(.2,.8,.2,1),filter .24s ease; }
+    .scroll-top img { display:block; width:100%; height:100%; object-fit:contain; }
+    .scroll-top:hover { transform:translateX(-50%) translateY(-8px) rotate(-2deg) scale(1.06); filter:drop-shadow(0 18px 19px rgba(21,21,26,.29)); }
+    .scroll-top:active { transform:translateX(-50%) translateY(-3px) scale(.96); }
 
     div[data-testid="stFileUploader"] { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:13px 18px 5px; }
     div[data-testid="stFileUploaderDropzone"] { border:1px dashed var(--violet); background:rgba(121,92,255,.035); border-radius:14px; }
@@ -176,8 +182,13 @@ st.markdown(
       <h1>产品包批量定价与结果校验</h1>
       <p>系统自动完成品类识别、价格计算和异常检查，并在不改变原始文件结构的前提下生成可直接使用的新产品包。</p>
     </div>
-    <a class="scroll-top" href="#jill10-top" title="返回顶部" aria-label="返回顶部">↑</a>
     """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f'<a class="scroll-top" href="#jill10-top" title="返回顶部" aria-label="返回顶部">'
+    f'<img src="{CATBOT_DATA_URL}" alt="返回顶部"></a>',
     unsafe_allow_html=True,
 )
 
