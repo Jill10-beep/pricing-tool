@@ -1091,10 +1091,34 @@ for file_index, uploaded in enumerate(uploaded_files):
             with result_tab:
                 if not pricing_result.product_summary.empty:
                     visible = pricing_result.product_summary.drop(columns=["区间下限", "区间上限"]).reset_index(drop=True)
-                    filter_cols = st.columns([2, 1, 1])
+                    category_group_columns = [
+                        column for column in ["原始分类", "一级品类", "识别品类", "价格区间"]
+                        if column in pricing_result.product_summary.columns
+                    ]
+                    category_overview = (
+                        pricing_result.product_summary
+                        .groupby(category_group_columns, dropna=False)
+                        .size()
+                        .reset_index(name="商品数量")
+                        .sort_values(["一级品类", "识别品类"], kind="stable")
+                        .reset_index(drop=True)
+                    )
+                    with st.expander(
+                        f"按品类检查 · 共 {len(category_overview)} 个分类组",
+                        expanded=len(category_overview) > 1,
+                    ):
+                        st.caption("先查看该产品包包含哪些品类及商品数量，再用下面的搜索和筛选快速定位错误品类。")
+                        st.dataframe(
+                            category_overview,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(360, 72 + len(category_overview) * 35),
+                        )
+
+                    filter_cols = st.columns([2, 1, 1, 1])
                     search_term = filter_cols[0].text_input(
-                        "搜索商品",
-                        placeholder="输入商品 Handle、原始分类或识别品类",
+                        "搜索商品或品类",
+                        placeholder="输入原始分类、识别品类或 Handle",
                         key=f"product_search_{file_index}",
                     ).strip().casefold()
                     primary_values = sorted(visible["一级品类"].dropna().astype(str).unique().tolist())
@@ -1103,7 +1127,13 @@ for file_index, uploaded in enumerate(uploaded_files):
                         ["全部"] + primary_values,
                         key=f"primary_filter_{file_index}",
                     )
-                    price_filter = filter_cols[2].selectbox(
+                    category_values = sorted(visible["识别品类"].dropna().astype(str).unique().tolist())
+                    category_filter = filter_cols[2].selectbox(
+                        "识别品类",
+                        ["全部"] + category_values,
+                        key=f"category_filter_{file_index}",
+                    )
+                    price_filter = filter_cols[3].selectbox(
                         "价格状态",
                         ["全部", "有折扣", "无折扣"],
                         key=f"price_filter_{file_index}",
@@ -1121,17 +1151,23 @@ for file_index, uploaded in enumerate(uploaded_files):
                         visible = visible[search_mask]
                     if primary_filter != "全部":
                         visible = visible[visible["一级品类"].astype(str) == primary_filter]
+                    if category_filter != "全部":
+                        visible = visible[visible["识别品类"].astype(str) == category_filter]
                     if price_filter == "有折扣":
                         visible = visible[visible["新划线价"] > 0]
                     elif price_filter == "无折扣":
                         visible = visible[visible["新划线价"] <= 0]
                     visible = visible.reset_index(drop=True)
-                    st.caption(f"当前显示 {len(visible)} / {len(pricing_result.product_summary)} 个商品。可搜索并按一级品类或折扣状态筛选。")
-                    st.caption("品类不对？直接点击表格中的一行或多行，再在表格下方批量纠正。按住 Ctrl 可连续选择多行。")
+                    st.caption(f"当前显示 {len(visible)} / {len(pricing_result.product_summary)} 个商品。可按品类定位后一次选择全部结果。")
                     if visible.empty:
                         st.info("没有符合当前搜索或筛选条件的商品。")
                         selection_event = None
+                        select_all_visible = False
                     else:
+                        select_all_visible = st.checkbox(
+                            f"全选当前搜索和筛选出的 {len(visible)} 个商品，进行批量纠正",
+                            key=f"select_all_visible_{file_index}",
+                        )
                         selection_event = st.dataframe(
                             visible,
                             use_container_width=True,
@@ -1142,8 +1178,13 @@ for file_index, uploaded in enumerate(uploaded_files):
                             key=f"pricing_table_{file_index}",
                         )
                     selected_rows = getattr(getattr(selection_event, "selection", None), "rows", [])
-                    if selected_rows:
+                    if select_all_visible:
+                        selected_items = visible.copy()
+                    elif selected_rows:
                         selected_items = visible.iloc[[int(index) for index in selected_rows]].copy()
+                    else:
+                        selected_items = pd.DataFrame()
+                    if not selected_items.empty:
                         selected_handles = selected_items["Handle"].astype(str).tolist()
                         selected_token = hashlib.sha256(
                             "|".join(sorted(selected_handles)).encode("utf-8")
