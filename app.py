@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from html import escape
 import json
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +12,7 @@ import zipfile
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from category_rules import CategoryRule, CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
@@ -124,10 +126,34 @@ st.markdown(
     .stage-banner strong { display:block; color:var(--ink); font-size:14px; }
     .stage-banner span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
     .stage-count { flex:0 0 auto; padding:7px 11px; border-radius:999px; background:#15151A; color:#FFF !important; font-weight:700; font-size:11px !important; margin:0 !important; }
-    .scroll-top { position:fixed; left:50%; bottom:72px; z-index:999; width:66px; height:66px; display:block; transform:translateX(-50%); text-decoration:none !important; filter:drop-shadow(0 12px 15px rgba(21,21,26,.22)); transition:transform .24s cubic-bezier(.2,.8,.2,1),filter .24s ease; }
+    .scroll-top { position:fixed; left:50%; bottom:72px; z-index:999; width:66px; height:66px; display:block; transform:translateX(-50%); text-decoration:none !important; filter:drop-shadow(0 12px 15px rgba(21,21,26,.22)); transition:transform .24s cubic-bezier(.2,.8,.2,1),filter .24s ease; cursor:grab; touch-action:none; user-select:none; -webkit-user-drag:none; }
     .scroll-top img { display:block; width:100%; height:100%; object-fit:contain; }
     .scroll-top:hover { transform:translateX(-50%) translateY(-8px) rotate(-2deg) scale(1.06); filter:drop-shadow(0 18px 19px rgba(21,21,26,.29)); }
     .scroll-top:active { transform:translateX(-50%) translateY(-3px) scale(.96); }
+    .scroll-top.is-dragging { cursor:grabbing; transform:none !important; transition:none !important; filter:drop-shadow(0 20px 22px rgba(21,21,26,.32)); }
+    .j10-assistant-badge { position:absolute; right:-2px; top:-1px; min-width:20px; height:20px; display:grid; place-items:center; padding:0 5px; border:2px solid #FFF; border-radius:999px; background:var(--coral); color:#FFF; font:700 10px/1 "DM Sans",sans-serif; box-shadow:0 5px 12px rgba(255,107,85,.3); }
+    .j10-assistant-badge.is-clear { background:#63C174; box-shadow:0 5px 12px rgba(99,193,116,.28); }
+    .j10-assistant-panel { position:fixed; z-index:998; width:min(340px,calc(100vw - 24px)); padding:18px; border:1px solid rgba(121,92,255,.22); border-radius:20px; background:rgba(255,255,255,.97); box-shadow:0 22px 70px rgba(21,21,26,.22); opacity:0; visibility:hidden; transform:translateY(8px) scale(.97); transition:opacity .18s ease,transform .18s ease,visibility .18s; backdrop-filter:blur(18px); }
+    .j10-assistant-panel.is-open { opacity:1; visibility:visible; transform:none; }
+    .j10-assistant-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:13px; }
+    .j10-assistant-head strong { display:block; color:var(--ink); font-size:15px; }
+    .j10-assistant-head span { display:block; margin-top:3px; color:var(--muted); font-size:11px; line-height:1.5; }
+    .j10-assistant-close { width:29px; height:29px; flex:0 0 auto; border:0; border-radius:9px; background:#F1EEF8; color:var(--ink); cursor:pointer; font-size:17px; }
+    .j10-assistant-status { display:flex; align-items:center; gap:9px; padding:11px 12px; margin-bottom:12px; border-radius:12px; background:#F6F3FC; color:var(--ink); font-size:12px; font-weight:600; }
+    .j10-assistant-status i { width:9px; height:9px; border-radius:50%; background:var(--assistant-color,var(--violet)); box-shadow:0 0 0 5px color-mix(in srgb,var(--assistant-color,var(--violet)) 16%,transparent); }
+    .j10-assistant-next { width:100%; min-height:42px; margin-bottom:11px; border:0; border-radius:12px; background:#15151A; color:#FFF; font-weight:700; cursor:pointer; transition:.18s; }
+    .j10-assistant-next:hover { background:var(--violet); transform:translateY(-1px); }
+    .j10-assistant-nav { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:11px; }
+    .j10-assistant-nav button,.j10-assistant-undo { min-height:37px; border:1px solid var(--line); border-radius:10px; background:#FFF; color:var(--ink); font-size:12px; font-weight:600; cursor:pointer; transition:.16s; }
+    .j10-assistant-nav button:hover,.j10-assistant-undo:not(:disabled):hover { border-color:var(--violet); background:#F6F3FC; }
+    .j10-assistant-search { display:grid; grid-template-columns:1fr auto; gap:7px; margin-bottom:9px; }
+    .j10-assistant-search input { min-width:0; height:39px; padding:0 11px; border:1px solid var(--line); border-radius:10px; outline:none; color:var(--ink); background:#FFF; }
+    .j10-assistant-search input:focus { border-color:var(--violet); box-shadow:0 0 0 3px rgba(121,92,255,.12); }
+    .j10-assistant-search button { min-width:58px; border:0; border-radius:10px; background:var(--lime); color:var(--ink); font-weight:700; cursor:pointer; }
+    .j10-assistant-search-note { min-height:16px; color:var(--muted); font-size:10px; line-height:1.45; }
+    .j10-assistant-footer { display:flex; align-items:center; gap:8px; margin-top:11px; padding-top:11px; border-top:1px solid #EEEAF2; }
+    .j10-assistant-undo { width:100%; }
+    .j10-assistant-undo:disabled { cursor:not-allowed; opacity:.45; }
 
     div[data-testid="stFileUploader"] { background:rgba(255,255,255,.88); border:1px solid var(--line); border-radius:18px; padding:13px 18px 5px; }
     div[data-testid="stFileUploaderDropzone"] { border:1px dashed var(--violet); background:rgba(121,92,255,.035); border-radius:14px; }
@@ -183,12 +209,6 @@ st.markdown(
       <p>系统自动完成品类识别、价格计算和异常检查，并在不改变原始文件结构的前提下生成可直接使用的新产品包。</p>
     </div>
     """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    f'<a class="scroll-top" href="#jill10-top" title="返回顶部" aria-label="返回顶部">'
-    f'<img src="{CATBOT_DATA_URL}" alt="返回顶部"></a>',
     unsafe_allow_html=True,
 )
 
@@ -295,6 +315,218 @@ def _undo_last_change() -> str | None:
 
 def _go_to_workflow_stage(stage: str) -> None:
     st.session_state.workflow_stage = stage
+
+
+def _assistant_batch_status(files: list[object], active_format: str) -> dict[str, object]:
+    """Build a compact, read-only batch status for the floating assistant."""
+    if not files:
+        return {
+            "attention": 0,
+            "status": "等待上传产品包",
+            "detail": "上传 CSV 后，我会提示识别结果和下一步操作。",
+            "next_label": "前往上传产品包",
+            "next_target": "jill10-upload",
+            "color": "#795CFF",
+        }
+
+    attention_handles: set[str] = set()
+    failed_files = 0
+    priced_products = 0
+    active_names = {_upload_name(item) for item in files}
+    marked_files = active_names & st.session_state.manual_review_files
+    for item in files:
+        try:
+            loaded = load_csv_bytes(_upload_bytes(item))
+            source = prepare_frame(loaded.frame, active_format)
+            result = apply_fixed_pricing(
+                source,
+                st.session_state.learned_category_mappings,
+                st.session_state.price_range_overrides,
+                st.session_state.product_category_mappings,
+                _custom_rule_objects(),
+            )
+            priced_products += len(result.product_summary)
+            attention_handles.update(str(value) for value in result.unresolved_handles)
+            if "匹配方式" in result.product_summary.columns and "Handle" in result.product_summary.columns:
+                semantic = result.product_summary[
+                    result.product_summary["匹配方式"].astype(str).str.contains("语义匹配", regex=False)
+                ]
+                attention_handles.update(semantic["Handle"].astype(str).tolist())
+        except Exception:
+            failed_files += 1
+
+    attention = len(attention_handles) + len(marked_files) + failed_files
+    if attention:
+        return {
+            "attention": attention,
+            "status": f"发现 {attention} 项需要确认",
+            "detail": f"已检查 {len(files)} 个文件、{priced_products} 个商品；未确认项目不会阻止其他文件下载。",
+            "next_label": "前往需要纠正的项目",
+            "next_target": "jill10-corrections",
+            "color": "#FF6B55",
+        }
+    return {
+        "attention": 0,
+        "status": "当前批次识别完成",
+        "detail": f"{len(files)} 个文件、{priced_products} 个商品均已完成自动定价检查。",
+        "next_label": "检查结果并下载",
+        "next_target": "jill10-results",
+        "color": "#63C174",
+    }
+
+
+def _render_pricing_assistant(status: dict[str, object], current_search: str) -> None:
+    history = workspace.setdefault("history", [])
+    attention = int(status["attention"])
+    badge_text = str(attention) if attention else "✓"
+    badge_class = "" if attention else " is-clear"
+    undo_disabled = "" if history else " disabled"
+    undo_label = f"撤销：{history[-1]['label']}" if history else "暂无可撤销的修改"
+    panel_html = f"""
+    <a class="scroll-top" href="#" title="拖动可移动；单击打开助手；双击复位" aria-label="可拖动的定价助手">
+      <img src="{CATBOT_DATA_URL}" alt="可拖动的定价助手" draggable="false">
+      <span class="j10-assistant-badge{badge_class}">{escape(badge_text)}</span>
+    </a>
+    <section class="j10-assistant-panel" aria-label="JILL10 定价助手">
+      <div class="j10-assistant-head"><div><strong>JILL10 定价助手</strong><span>{escape(str(status['detail']))}</span></div><button class="j10-assistant-close" type="button" aria-label="关闭">×</button></div>
+      <div class="j10-assistant-status" style="--assistant-color:{escape(str(status['color']))}"><i></i>{escape(str(status['status']))}</div>
+      <button class="j10-assistant-next" type="button" data-target="{escape(str(status['next_target']))}">{escape(str(status['next_label']))}</button>
+      <div class="j10-assistant-nav">
+        <button type="button" data-target="jill10-top">返回顶部</button><button type="button" data-target="jill10-upload">上传区域</button>
+        <button type="button" data-target="jill10-results">识别结果</button><button type="button" data-target="jill10-corrections">需要纠正</button>
+        <button type="button" data-target="jill10-download">下载区域</button><button type="button" data-target="jill10-top">页面导航</button>
+      </div>
+      <form class="j10-assistant-search"><input value="{escape(current_search, quote=True)}" placeholder="搜索 Handle、商品或品类"><button type="submit">搜索</button></form>
+      <div class="j10-assistant-search-note">搜索会筛选全部已上传产品包；清空内容再搜索即可恢复全部结果。</div>
+      <div class="j10-assistant-footer"><button class="j10-assistant-undo" type="button"{undo_disabled}>{escape(undo_label)}</button></div>
+    </section>
+    """
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+    components.html(
+        """
+        <script>
+        (() => {
+          const doc = window.parent.document;
+          const win = window.parent;
+          const bot = doc.querySelector('.scroll-top');
+          const panel = doc.querySelector('.j10-assistant-panel');
+          if (!bot || !panel || bot.dataset.dragReady === '1') return;
+          bot.dataset.dragReady = '1';
+
+          const storageKey = 'jill10-catbot-position-v1';
+          const padding = 10;
+          let drag = null;
+          let suppressClick = false;
+          let clickTimer = null;
+          const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
+
+          const positionPanel = () => {
+            if (!panel.classList.contains('is-open')) return;
+            const botRect = bot.getBoundingClientRect();
+            const panelRect = panel.getBoundingClientRect();
+            let left = botRect.left + botRect.width / 2 - panelRect.width / 2;
+            let top = botRect.top - panelRect.height - 12;
+            left = clamp(left, 12, Math.max(12, win.innerWidth - panelRect.width - 12));
+            if (top < 12) top = Math.min(win.innerHeight - panelRect.height - 12, botRect.bottom + 12);
+            panel.style.left = `${left}px`;
+            panel.style.top = `${Math.max(12, top)}px`;
+          };
+          const place = (left, top, save = false) => {
+            const maxLeft = Math.max(padding, win.innerWidth - bot.offsetWidth - padding);
+            const maxTop = Math.max(padding, win.innerHeight - bot.offsetHeight - padding);
+            const x = clamp(left, padding, maxLeft);
+            const y = clamp(top, padding, maxTop);
+            bot.style.left = `${x}px`; bot.style.top = `${y}px`; bot.style.bottom = 'auto'; bot.style.transform = 'none';
+            if (save) { try { win.localStorage.setItem(storageKey, JSON.stringify({left:x, top:y})); } catch (_) {} }
+            positionPanel();
+          };
+          const togglePanel = (force) => {
+            const open = typeof force === 'boolean' ? force : !panel.classList.contains('is-open');
+            panel.classList.toggle('is-open', open);
+            if (open) requestAnimationFrame(positionPanel);
+          };
+
+          try {
+            const saved = JSON.parse(win.localStorage.getItem(storageKey) || 'null');
+            if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) requestAnimationFrame(() => place(saved.left, saved.top));
+          } catch (_) {}
+
+          bot.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            const rect = bot.getBoundingClientRect();
+            drag = {pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,left:rect.left,top:rect.top,moved:false};
+            suppressClick = false; bot.classList.add('is-dragging'); bot.setPointerCapture(event.pointerId);
+          });
+          bot.addEventListener('pointermove', (event) => {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+            const dx = event.clientX - drag.startX, dy = event.clientY - drag.startY;
+            if (Math.hypot(dx,dy) > 4) drag.moved = true;
+            place(drag.left + dx, drag.top + dy);
+          });
+          const finishDrag = (event) => {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+            suppressClick = drag.moved;
+            const rect = bot.getBoundingClientRect();
+            bot.classList.remove('is-dragging'); place(rect.left,rect.top,true);
+            try { bot.releasePointerCapture(event.pointerId); } catch (_) {}
+            drag = null;
+          };
+          bot.addEventListener('pointerup', finishDrag);
+          bot.addEventListener('pointercancel', finishDrag);
+          bot.addEventListener('click', (event) => {
+            event.preventDefault();
+            if (suppressClick) { suppressClick = false; return; }
+            clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => togglePanel(), 210);
+          });
+          bot.addEventListener('dblclick', (event) => {
+            event.preventDefault(); clearTimeout(clickTimer); togglePanel(false);
+            place((win.innerWidth - bot.offsetWidth) / 2, win.innerHeight - bot.offsetHeight - 72, true);
+          });
+
+          panel.querySelector('.j10-assistant-close').addEventListener('click', () => togglePanel(false));
+          panel.querySelectorAll('[data-target]').forEach((button) => button.addEventListener('click', () => {
+            const target = doc.getElementById(button.dataset.target) || doc.getElementById('jill10-results') || doc.getElementById('jill10-top');
+            if (target) target.scrollIntoView({behavior:'smooth',block:'start'});
+            togglePanel(false);
+          }));
+          panel.querySelector('.j10-assistant-search').addEventListener('submit', (event) => {
+            event.preventDefault();
+            const query = event.currentTarget.querySelector('input').value.trim();
+            const url = new URL(win.location.href);
+            if (query) url.searchParams.set('assistant_search',query); else url.searchParams.delete('assistant_search');
+            win.location.href = url.toString();
+          });
+          const undo = panel.querySelector('.j10-assistant-undo');
+          undo.addEventListener('click', () => {
+            if (undo.disabled) return;
+            const url = new URL(win.location.href); url.searchParams.set('assistant_action','undo'); win.location.href = url.toString();
+          });
+          doc.addEventListener('pointerdown', (event) => {
+            if (panel.classList.contains('is-open') && !panel.contains(event.target) && !bot.contains(event.target)) togglePanel(false);
+          });
+          win.addEventListener('resize', () => { const rect=bot.getBoundingClientRect(); place(rect.left,rect.top,true); });
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+assistant_action = str(st.query_params.get("assistant_action", ""))
+if assistant_action == "undo":
+    st.query_params.pop("assistant_action", None)
+    undone = _undo_last_change()
+    if undone:
+        st.toast(f"已撤销：{undone}", icon="↩️")
+    else:
+        st.toast("目前没有可以撤销的修改")
+    st.rerun()
+
+assistant_search = str(st.query_params.get("assistant_search", "")).strip()
 
 with st.sidebar:
     st.markdown("## +10 · JILL10 PRICING")
@@ -482,6 +714,7 @@ if navigation == "品类与价格规则":
     new_uploads = None
     workflow_stage = None
 else:
+    st.markdown('<div id="jill10-upload"></div>', unsafe_allow_html=True)
     st.markdown('<div class="page-head"><div><div class="section-kicker">Pricing Workspace</div><h2>单页定价工作台</h2></div><p>上传、检查、纠正和下载都在当前页面完成</p></div>', unsafe_allow_html=True)
     workflow_stage = "单页工作台"
     format_label = st.radio(
@@ -614,6 +847,8 @@ if new_uploads:
         st.toast(f"已安全保存 {len(new_uploads)} 个产品包", icon="✅")
 
 uploaded_files = list(workspace["files"].get(file_format, []))
+assistant_status = _assistant_batch_status(uploaded_files, file_format)
+_render_pricing_assistant(assistant_status, assistant_search)
 
 if workflow_stage:
     stage_messages = {
@@ -730,7 +965,10 @@ stage_titles = {
     "单页工作台": ("Batch Workspace", "产品包处理结果"),
 }
 stage_kicker, stage_title = stage_titles.get(workflow_stage, ("Batch Queue", "处理队列"))
+st.markdown('<div id="jill10-results"></div><div id="jill10-corrections"></div>', unsafe_allow_html=True)
 st.markdown(f'<div class="section-kicker">{stage_kicker}</div><div class="section-title">{stage_title}</div>', unsafe_allow_html=True)
+if assistant_search:
+    st.info(f'小助手正在全部产品包中搜索“{assistant_search}”。清空小助手搜索框并再次搜索即可恢复全部结果。')
 queue_cols = st.columns(3)
 queue_cols[0].metric("已上传文件", len(uploaded_files))
 
@@ -744,7 +982,7 @@ for file_index, uploaded in enumerate(uploaded_files):
     uploaded_data = _upload_bytes(uploaded)
     with st.expander(
         f"{file_index + 1:02d}  ·  {uploaded_name}",
-        expanded=file_index == 0,
+        expanded=file_index == 0 or bool(assistant_search),
     ):
         try:
             loaded = load_csv_bytes(uploaded_data)
@@ -832,11 +1070,12 @@ for file_index, uploaded in enumerate(uploaded_files):
                             columns=["区间下限", "区间上限"],
                             errors="ignore",
                         ).reset_index(drop=True)
-                        task_search = st.text_input(
+                        local_task_search = st.text_input(
                             "搜索定价结果",
                             placeholder="输入 Handle、原始分类或识别品类",
                             key=f"task_search_{file_index}",
                         ).strip().casefold()
+                        task_search = (assistant_search or local_task_search).strip().casefold()
                         if task_search:
                             task_search_columns = [
                                 column for column in ["Handle", "原始分类", "一级品类", "识别品类", "匹配方式"]
@@ -1127,11 +1366,12 @@ for file_index, uploaded in enumerate(uploaded_files):
                         )
 
                     filter_cols = st.columns([2, 1, 1, 1])
-                    search_term = filter_cols[0].text_input(
+                    local_search_term = filter_cols[0].text_input(
                         "搜索商品或品类",
                         placeholder="输入原始分类、识别品类或 Handle",
                         key=f"product_search_{file_index}",
                     ).strip().casefold()
+                    search_term = (assistant_search or local_search_term).strip().casefold()
                     primary_values = sorted(visible["一级品类"].dropna().astype(str).unique().tolist())
                     primary_filter = filter_cols[1].selectbox(
                         "一级品类",
@@ -1384,6 +1624,7 @@ else:
     queue_cols[2].metric("待处理", needs_attention)
 
 if workflow_stage == "单页工作台":
+    st.markdown('<div id="jill10-download"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">全部处理结果</div>', unsafe_allow_html=True)
     if completed_outputs:
         st.warning("批量下载得到的是 ZIP 压缩包。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
@@ -1403,6 +1644,7 @@ if workflow_stage == "单页工作台":
         st.info("目前没有通过校验、可以下载的产品包。请展开上面的文件查看提示并完成确认。")
 
 if workflow_stage == "④ 下载结果":
+    st.markdown('<div id="jill10-download"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
     if completed_outputs:
         st.warning("批量下载得到的是 ZIP 压缩包，仅用于一次保存多个文件。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
