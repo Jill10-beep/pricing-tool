@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from category_rules import CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, infer_primary_category, infer_similar_category, rank_similar_categories
+from category_rules import CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, classify_product_decision, has_category_conflict, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
 from exporter import export_csv, verify_export
 from format_adapter import SHOPIFY, prepare_frame
@@ -194,7 +194,7 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(confirmed.product_summary.iloc[0]["识别品类"], "Hoodies")
         self.assertEqual(validate_fixed_pricing(confirmed), ())
 
-    def test_same_supplier_category_cannot_split_into_different_categories(self):
+    def test_obvious_outlier_is_not_forced_into_supplier_category_majority(self):
         source = pd.DataFrame([
             row("a", "Men's Classic Shirt", "Supplier Collection A", "20", "0", "A", "https://example.com/a.jpg"),
             row("b", "Men's Oxford Shirt", "Supplier Collection A", "20", "0", "B", "https://example.com/b.jpg"),
@@ -203,11 +203,12 @@ class ToolTests(unittest.TestCase):
             row("e", "Outdoor Leather Boots", "Supplier Collection A", "20", "0", "E", "https://example.com/e.jpg"),
         ])
         result = apply_fixed_pricing(source)
-        self.assertEqual(result.unresolved_handles, ())
-        self.assertEqual(len(result.product_summary), 5)
+        self.assertEqual(result.unresolved_handles, ("e",))
+        self.assertEqual(len(result.product_summary), 4)
         self.assertEqual(result.product_summary["识别品类"].nunique(), 1)
         self.assertEqual(result.product_summary.iloc[0]["识别品类"], "Shirts")
         self.assertTrue(result.product_summary["匹配方式"].str.contains("同一原始分类多数一致").all())
+        self.assertIn("冲突", result.unresolved_details[0]["未识别原因"])
 
     def test_single_product_override_only_changes_selected_product_category(self):
         source = pd.DataFrame([
@@ -451,6 +452,53 @@ class RegressionTests(unittest.TestCase):
         self.assertIsNone(parse_number("nan"))
         self.assertIsNone(parse_number("inf"))
         self.assertEqual(parse_number("$1,234.50"), 1234.5)
+
+
+class RecognitionV2Tests(unittest.TestCase):
+    """Core product nouns outrank modifiers; conflicts abstain instead of guessing."""
+
+    def test_core_product_nouns_outrank_packaging_and_style_words(self):
+        expected = {
+            "Women's Cotton 5 Pack Socks Set": "Jewelry and Accessories::Socks",
+            "Women's Tie Dye Platform Sneakers": "Footwear::Sneakers",
+            "Women's Lace Bra Accessories": "Underwear, Sleepwear and Swimwear::Bras",
+            "Smart Watch Strap Gift Set": "Jewelry and Accessories::Watch Bands",
+            "Women's Two Piece Floral Dress Set": "Women's Clothing::Dresses",
+        }
+        for title, rule_id in expected.items():
+            with self.subTest(title=title):
+                decision = classify_product_decision(title)
+                self.assertIsNotNone(decision.rule)
+                self.assertEqual(decision.rule.rule_id, rule_id)
+                self.assertGreaterEqual(decision.confidence, 0.90)
+                self.assertIn("核心商品词", decision.reason)
+
+    def test_core_product_conflicts_are_hard_rejections(self):
+        jewelry = classify_product("Jewelry Sets")
+        watches = classify_product("Watches")
+        sets = classify_product("Women's Sets")
+        self.assertTrue(has_category_conflict("Women's Lace Bra Accessories", jewelry))
+        self.assertTrue(has_category_conflict("Smart Watch Band", watches))
+        self.assertTrue(has_category_conflict("Women's Socks Set", sets))
+
+    def test_generic_supplier_category_is_refined_by_clear_title(self):
+        source = pd.DataFrame([
+            row("a", "Women's Wool Cardigan", "Women's, Tops", "20", "0", "A", ""),
+            row("b", "Women's Open Front Cardigan", "Women's, Tops", "20", "0", "B", ""),
+        ])
+        result = apply_fixed_pricing(source)
+        self.assertEqual(result.unresolved_handles, ())
+        self.assertEqual(result.product_summary["识别品类"].unique().tolist(), ["Cardigans"])
+        self.assertTrue(result.product_summary["匹配方式"].str.contains("标题细化").all())
+
+    def test_specific_category_title_conflict_stays_unchanged(self):
+        source = pd.DataFrame([
+            row("shoe", "Women's Platform Sneakers", "Women's, Dresses", "123.45", "0", "S", ""),
+        ])
+        result = apply_fixed_pricing(source)
+        self.assertEqual(result.unresolved_handles, ("shoe",))
+        self.assertEqual(result.frame.iloc[0]["price"], "123.45")
+        self.assertIn("冲突", result.unresolved_details[0]["未识别原因"])
 
 
 class StorageProductTests(unittest.TestCase):

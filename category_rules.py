@@ -20,6 +20,17 @@ class CategoryRule:
         return f"{self.primary}::{self.name}"
 
 
+@dataclass(frozen=True)
+class ClassificationDecision:
+    """A conservative category decision with an explanation for the UI."""
+
+    rule: CategoryRule | None
+    confidence: float
+    reason: str
+    evidence: tuple[str, ...] = ()
+    alternatives: tuple[str, ...] = ()
+
+
 # primary|subcategory|min|max. This is the user's complete English price table.
 _TABLE = """
 Women's Clothing|Dresses|34.99|44.99
@@ -330,6 +341,80 @@ _APPAREL_NOUNS = (
     "sweatshirt", "blazer", "bodysuit", "pajamas", "连衣裙", "上衣", "裤",
 )
 
+# Recognition V2: terms that describe the product itself, ordered by semantic
+# strength.  Packaging/style words such as "set", "printed" and "women's" are
+# deliberately absent or weak, so "Women's Socks Set" is led by Socks rather
+# than Sets.  Phrase-specific products outrank their shorter parent nouns:
+# Watch Bands > Watches, Running Shoes > Shoes, One Piece Swimsuit > Swimwear.
+_CORE_PRODUCT_TERMS: tuple[tuple[str, int, tuple[str, ...]], ...] = (
+    ("Jewelry and Accessories::Watch Bands", 140, ("watch band", "watch bands", "watch strap", "watch straps", "smartwatch band", "smartwatch strap", "手表表带", "智能手表表带", "表带")),
+    ("Underwear, Sleepwear and Swimwear::One Piece Swimsuit", 140, ("one piece swimsuit", "one piece swimwear", "onepiece swimsuit", "连体泳衣")),
+    ("Footwear::Running Shoes", 135, ("running shoe", "running shoes", "jogging shoe", "jogging shoes", "跑鞋")),
+    ("Footwear::Outdoor Shoes", 132, ("hiking shoe", "hiking shoes", "trekking shoe", "trekking shoes", "outdoor shoe", "outdoor shoes", "登山鞋", "户外鞋")),
+    ("Men's Clothing::Polo Shirts", 132, ("polo shirt", "polo shirts", "polo top", "男polo")),
+    ("Men's Clothing::Underwear", 132, ("boxer brief", "boxer briefs", "boxers", "men underwear", "men's underwear", "mens underwear", "男士内裤")),
+    ("Underwear, Sleepwear and Swimwear::Panties (Multipacks)", 132, ("panties", "panty", "knickers", "women's briefs", "womens briefs", "女士内裤")),
+    ("Underwear, Sleepwear and Swimwear::Bras", 132, ("sports bra", "wireless bra", "bralette", "bralettes", "bra", "bras", "文胸", "胸罩")),
+    ("Jewelry and Accessories::Ties", 130, ("necktie", "neckties", "neck tie", "bow tie", "knit tie", "领带", "领结")),
+    ("Jewelry and Accessories::Socks", 130, ("sock", "socks", "crew socks", "ankle socks", "袜子")),
+    ("Footwear::Sneakers", 128, ("skate shoe", "skate shoes", "platform sneaker", "platform sneakers", "sneaker", "sneakers", "trainer", "trainers", "运动鞋", "板鞋")),
+    ("Footwear::Casual Shoes", 126, ("casual shoe", "casual shoes", "休闲鞋")),
+    ("Footwear::Boots", 126, ("work boot", "work boots", "western boot", "western boots", "cowboy boot", "cowboy boots", "ankle boot", "ankle boots", "boot", "boots", "靴子", "工作靴", "西部靴")),
+    ("Footwear::Sandals", 126, ("sandal", "sandals", "凉鞋")),
+    ("Footwear::Slippers", 126, ("slipper", "slippers", "拖鞋")),
+    ("Footwear::Loafers", 126, ("loafer", "loafers", "乐福鞋")),
+    ("Footwear::Heels", 126, ("high heel", "high heels", "heels", "高跟鞋")),
+    ("Footwear::Flats", 126, ("flat shoe", "flat shoes", "ballet flats", "平底鞋")),
+    ("Women's Clothing::Jumpsuits", 122, ("jumpsuit", "jumpsuits", "连身裤", "连体裤")),
+    ("Women's Clothing::Rompers", 122, ("romper", "rompers", "连体短裤")),
+    ("Women's Clothing::Cardigans", 120, ("cardigan", "cardigans", "cardi", "开衫", "针织开衫")),
+    ("Women's Clothing::Sweatshirts", 120, ("sweatshirt", "sweatshirts", "卫衣")),
+    ("Women's Clothing::Hoodies", 120, ("hoodie", "hoodies", "hooded sweatshirt", "连帽衫")),
+    ("Men's Clothing::Hoodies", 120, ("hoodie", "hoodies", "hooded sweatshirt", "连帽衫")),
+    ("Women's Clothing::Sweaters", 118, ("sweater", "sweaters", "pullover sweater", "毛衣", "针织衫")),
+    ("Men's Clothing::Sweaters", 118, ("sweater", "sweaters", "pullover sweater", "毛衣", "针织衫")),
+    ("Women's Clothing::T-Shirts", 118, ("t shirt", "t shirts", "tee shirt", "tee shirts", "graphic tee", "女t恤")),
+    ("Men's Clothing::T-Shirts", 118, ("t shirt", "t shirts", "tee shirt", "tee shirts", "graphic tee", "男t恤")),
+    ("Women's Clothing::Blouses", 116, ("blouse", "blouses", "女衬衫")),
+    ("Women's Clothing::Shirts", 112, ("women's shirt", "womens shirt", "women shirt")),
+    ("Men's Clothing::Shirts", 112, ("men's shirt", "mens shirt", "men shirt", "男衬衫")),
+    ("Women's Clothing::Dresses", 116, ("maxi dress", "midi dress", "mini dress", "casual dress", "dress", "dresses", "连衣裙")),
+    ("Women's Clothing::Skirts", 116, ("maxi skirt", "midi skirt", "mini skirt", "skirt", "skirts", "半身裙")),
+    ("Women's Clothing::Jeans", 116, ("jeans", "denim jeans", "牛仔裤")),
+    ("Men's Clothing::Jeans", 116, ("jeans", "denim jeans", "牛仔裤")),
+    ("Women's Clothing::Leggings", 116, ("legging", "leggings", "打底裤")),
+    ("Women's Clothing::Shorts", 112, ("women's shorts", "womens shorts", "women shorts", "女短裤")),
+    ("Men's Clothing::Shorts", 112, ("men's shorts", "mens shorts", "men shorts", "男短裤")),
+    ("Women's Clothing::Pants", 108, ("women's pants", "womens pants", "women pants", "women trousers", "女长裤")),
+    ("Men's Clothing::Pants", 108, ("men's pants", "mens pants", "men pants", "men trousers", "男长裤")),
+    ("Women's Clothing::Jackets", 110, ("women's jacket", "womens jacket", "women jacket", "女夹克")),
+    ("Men's Clothing::Jackets", 110, ("men's jacket", "mens jacket", "men jacket", "男夹克")),
+    ("Women's Clothing::Coats", 110, ("women's coat", "womens coat", "women coat", "女外套")),
+    ("Men's Clothing::Coats", 110, ("men's coat", "mens coat", "men coat", "男外套")),
+    ("Women's Clothing::Blazers", 112, ("blazer", "blazers", "西装外套")),
+    ("Bags::Crossbody Bags", 120, ("crossbody bag", "cross body bag", "斜挎包")),
+    ("Bags::Shoulder Bags", 116, ("shoulder bag", "shoulder bags", "单肩包")),
+    ("Bags::Tote Bags", 116, ("tote bag", "tote bags", "托特包")),
+    ("Bags::Backpacks", 116, ("backpack", "backpacks", "背包")),
+    ("Bags::Handbags", 112, ("handbag", "handbags", "手提包")),
+    ("Bags::Wallets", 116, ("wallet", "wallets", "钱包")),
+    ("Bags::Clutches", 116, ("clutch bag", "clutch bags", "clutch", "手拿包")),
+    ("Jewelry and Accessories::Watches", 104, ("wristwatch", "wrist watch", "watch", "watches", "手表", "腕表")),
+    ("Jewelry and Accessories::Sunglasses", 116, ("sunglasses", "sun glasses", "墨镜", "太阳镜")),
+    ("Jewelry and Accessories::Belts", 112, ("belt", "belts", "腰带", "皮带")),
+    ("Underwear, Sleepwear and Swimwear::Bikini", 122, ("bikini", "bikinis", "比基尼")),
+    ("Underwear, Sleepwear and Swimwear::Pajamas", 116, ("pajama", "pajamas", "pyjama", "pyjamas", "睡衣")),
+    ("Underwear, Sleepwear and Swimwear::Bodysuits", 116, ("bodysuit", "bodysuits", "连体内衣")),
+    ("Home Decor and Bedding::Furniture", 108, ("furniture", "sofa", "dining chair", "desk chair", "table", "cabinet", "家具", "沙发", "椅子")),
+    ("Women's Clothing::Sets", 60, ("women's set", "womens set", "women set", "two piece set", "matching set", "女套装")),
+)
+
+_GENERIC_RULE_IDS = {
+    "Women's Clothing::Sets", "Women's Clothing::Tops", "Women's Clothing::Activewear",
+    "Women's Clothing::Loungewear", "Men's Clothing::Activewear", "Men's Clothing::Loungewear",
+    "Sports and Outdoor::Running Gear", "Automotive, Outdoor and Office::Camping Gear",
+}
+
 
 def _contains(text: str, keyword: str) -> bool:
     keyword = _normalize(keyword)
@@ -344,6 +429,121 @@ def _contains(text: str, keyword: str) -> bool:
     if keyword == "tie":
         return re.search(r"(?<![a-z0-9])tie(?!\s+dye)(?![a-z0-9])", text) is not None
     return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text) is not None
+
+
+def _gender_flags(normalized: str) -> tuple[bool, bool]:
+    is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
+    is_men = re.search(r"(?<![a-z0-9])(?:men|mens|men's|male)(?![a-z0-9])", normalized) is not None
+    return is_women, is_men
+
+
+def _core_product_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
+    """Return product-noun candidates, with modifiers and packaging words demoted."""
+    normalized = _normalize(text)
+    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
+    is_women, is_men = _gender_flags(normalized)
+    matches: list[tuple[int, int, CategoryRule, str]] = []
+    for rule_id, priority, terms in _CORE_PRODUCT_TERMS:
+        rule = rules_by_id[rule_id]
+        if is_women and not is_men and rule.primary == "Men's Clothing":
+            continue
+        if is_men and not is_women and rule.primary == "Women's Clothing":
+            continue
+        matched = [term for term in terms if _contains(normalized, term)]
+        if not matched:
+            continue
+        strongest = max(matched, key=lambda term: (len(_normalize(term).split()), len(_normalize(term))))
+        specificity = len(_normalize(strongest).split()) * 20 + len(_normalize(strongest))
+        matches.append((priority, specificity, rule, strongest))
+    matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return tuple(matches)
+
+
+def classify_product_decision(text: str) -> ClassificationDecision:
+    """Recognize a product conservatively and expose confidence/evidence.
+
+    High-signal product nouns decide the category.  Generic words and fuzzy
+    similarity never override a conflicting product noun; ambiguous direct
+    matches abstain so the price remains unchanged for manual confirmation.
+    """
+    normalized = _normalize(text)
+    if not normalized:
+        return ClassificationDecision(None, 0.0, "没有可用于识别的商品信息")
+    if is_storage_product(normalized):
+        rule = classify_storage_product(normalized)
+        return ClassificationDecision(rule, 0.99, "核心商品词：收纳容器", ("storage/organizer",))
+
+    core = _core_product_candidates(normalized)
+    if core:
+        priority, specificity, rule, evidence = core[0]
+        competing = [item for item in core[1:] if item[2].rule_id != rule.rule_id]
+        if competing:
+            second_priority, second_specificity, second_rule, second_evidence = competing[0]
+            # Similar-strength product nouns are a real ambiguity, not a reason
+            # to guess.  Exact multiword products still win over short nouns.
+            lead = (priority - second_priority) + (specificity - second_specificity) / 10
+            if lead < 8:
+                return ClassificationDecision(
+                    None,
+                    0.49,
+                    "检测到相互冲突的核心商品词，等待人工确认",
+                    (evidence, second_evidence),
+                    (rule.rule_id, second_rule.rule_id),
+                )
+        confidence = min(0.99, 0.62 + priority / 400 + min(specificity, 80) / 1000)
+        return ClassificationDecision(
+            _apply_plus_size(rule, normalized),
+            confidence,
+            f"核心商品词：{evidence}",
+            (evidence,),
+        )
+
+    explicit_primary = infer_primary_category(normalized)
+    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
+    alias_matches: list[tuple[int, CategoryRule, str]] = []
+    has_apparel_noun = any(_contains(normalized, noun) for noun in _APPAREL_NOUNS)
+    for rule_id, aliases in ALIASES.items():
+        alias_rule = rules_by_id[rule_id]
+        if explicit_primary == "Footwear" and alias_rule.primary != "Footwear":
+            continue
+        matched = [
+            term for term in aliases
+            if _contains(normalized, term)
+            and not (has_apparel_noun and _normalize(term) in _WEAK_ALIASES)
+        ]
+        if matched:
+            strongest = max(matched, key=lambda term: len(_normalize(term)))
+            alias_matches.append((len(_normalize(strongest)), alias_rule, strongest))
+    alias_matches.sort(key=lambda item: item[0], reverse=True)
+    if alias_matches:
+        length, rule, evidence = alias_matches[0]
+        tied = [item for item in alias_matches[1:] if item[0] == length and item[1].rule_id != rule.rule_id]
+        if tied:
+            return ClassificationDecision(
+                None, 0.45, "多个品类命中了同等强度的词，等待人工确认",
+                (evidence, tied[0][2]), (rule.rule_id, tied[0][1].rule_id),
+            )
+        return ClassificationDecision(
+            _apply_plus_size(rule, normalized), 0.88, f"明确品类短语：{evidence}", (evidence,)
+        )
+
+    candidates = rules_for_primary(explicit_primary) if explicit_primary else CATEGORY_RULES
+    matches: list[tuple[int, CategoryRule, str]] = []
+    for rule in candidates:
+        matched = [term for term in rule.keywords if _contains(normalized, term)]
+        if matched:
+            strongest = max(matched, key=lambda term: len(_normalize(term)))
+            matches.append((len(_normalize(strongest)), rule, strongest))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    if matches:
+        length, rule, evidence = matches[0]
+        tied = [item for item in matches[1:] if item[0] == length and item[1].rule_id != rule.rule_id]
+        if tied:
+            return ClassificationDecision(None, 0.42, "通用关键词无法唯一确定品类", (evidence, tied[0][2]))
+        return ClassificationDecision(
+            _apply_plus_size(rule, normalized), 0.80, f"价格表品类词：{evidence}", (evidence,)
+        )
+    return ClassificationDecision(None, 0.0, "价格表中没有明确对应项")
 
 
 def rules_for_primary(primary: str) -> tuple[CategoryRule, ...]:
@@ -417,6 +617,11 @@ def base_rule(rule: CategoryRule) -> CategoryRule:
     )
 
 
+def is_generic_rule(rule: CategoryRule) -> bool:
+    """Whether a broad supplier category may be refined by a clear title noun."""
+    return base_rule(rule).rule_id in _GENERIC_RULE_IDS
+
+
 _apply_plus_size = apply_plus_size  # backwards-compatible name
 
 
@@ -480,51 +685,7 @@ def classify_storage_product(text: str) -> CategoryRule:
 
 
 def classify_product(text: str) -> CategoryRule | None:
-    normalized = _normalize(text)
-    explicit_primary = infer_primary_category(normalized)
-    storage_product = is_storage_product(normalized)
-    if storage_product:
-        return classify_storage_product(normalized)
-    # Product nouns outrank packaging words and gender departments. For
-    # example, "Women's Socks Set" is a set of socks, not a Women's Clothing
-    # outfit. Keep these highly specific locks before generic alias matching.
-    strong_product_nouns = (
-        ("Jewelry and Accessories::Watch Bands", ("watch band", "watch bands", "watch strap", "watch straps", "smartwatch band", "smartwatch strap", "手表表带", "智能手表表带", "表带")),
-        ("Jewelry and Accessories::Watches", ("watch", "watches", "wristwatch", "wrist watch", "手表", "腕表")),
-        ("Jewelry and Accessories::Socks", ("sock", "socks", "袜子")),
-    )
-    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
-    for rule_id, nouns in strong_product_nouns:
-        if any(_contains(normalized, noun) for noun in nouns):
-            return rules_by_id[rule_id]
-    # A strong, unique subcategory phrase also determines its parent category.
-    # This prevents words such as "Men's" in "Men's Necktie" from forcing the
-    # product into Men's Clothing when the table places ties under Accessories.
-    alias_matches = []
-    has_apparel_noun = any(_contains(normalized, noun) for noun in _APPAREL_NOUNS)
-    for rule_id, aliases in ALIASES.items():
-        alias_rule = rules_by_id[rule_id]
-        if explicit_primary == "Footwear" and alias_rule.primary != "Footwear":
-            continue
-        lengths = [
-            len(_normalize(k)) for k in aliases
-            if _contains(normalized, k)
-            and not (has_apparel_noun and _normalize(k) in _WEAK_ALIASES)
-        ]
-        if lengths:
-            alias_matches.append((max(lengths), alias_rule))
-    if alias_matches:
-        return _apply_plus_size(max(alias_matches, key=lambda item: item[0])[1], normalized)
-    primary = explicit_primary
-    candidates = rules_for_primary(primary) if primary else CATEGORY_RULES
-    matches = []
-    for rule in candidates:
-        lengths = [len(_normalize(k)) for k in rule.keywords if _contains(normalized, k)]
-        if lengths:
-            matches.append((max(lengths), rule))
-    if matches:
-        return _apply_plus_size(max(matches, key=lambda item: item[0])[1], normalized)
-    return None
+    return classify_product_decision(text).rule
 
 
 def _rule_document(rule: CategoryRule) -> str:
@@ -585,9 +746,10 @@ def rank_similar_categories(text: str, top_n: int = 3) -> tuple[tuple[CategoryRu
 
 
 def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
-    rule = classify_product(text)
-    if rule:
-        return rule, f"层级匹配：{rule.primary} → {rule.name}"
+    decision = classify_product_decision(text)
+    if decision.rule:
+        confidence = round(decision.confidence * 100)
+        return decision.rule, f"层级匹配·{confidence}%·{decision.reason}：{decision.rule.primary} → {decision.rule.name}"
     ranked = rank_similar_categories(text, 2)
     if not ranked:
         return None, None
@@ -619,6 +781,14 @@ def has_category_conflict(text: str, rule: CategoryRule) -> bool:
         return True
     if is_men and not is_women and rule.primary == "Women's Clothing":
         return True
+    # A clear product noun is a hard compatibility gate. This catches broad
+    # cross-department mistakes such as Bra → Accessories, Watch Band → Watch,
+    # Socks Set → Women's Sets, or Sneakers → Ties.
+    core = _core_product_candidates(normalized)
+    if core:
+        strongest = core[0][2]
+        if strongest.rule_id != base_rule(rule).rule_id:
+            return True
     footwear_terms = (
         "footwear", "shoe", "shoes", "sneaker", "sneakers", "trainer", "trainers",
         "boot", "boots", "sandal", "sandals", "slipper", "slippers", "heel", "heels",

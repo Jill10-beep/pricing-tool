@@ -15,8 +15,10 @@ from category_rules import (
     base_rule,
     STORAGE_CONTENT_PRIMARIES,
     classify_product,
+    classify_product_decision,
     classify_storage_product,
     has_category_conflict,
+    is_generic_rule,
     is_storage_product,
     infer_similar_category,
     resolve_rule,
@@ -38,7 +40,7 @@ class PricingResult:
     # are reported instead of being skipped silently.
     skipped_handles: tuple[str, ...] = ()
     # One record per unresolved product: Handle, 商品名称, 原始分类 ("" when the
-    # supplier gave none), 原售价, SKU数量. Products without a category cannot be
+    # supplier gave none), 未识别原因, 原售价, SKU数量. Products without a category cannot be
     # fixed per category, so the UI needs them individually.
     unresolved_details: tuple[dict[str, object], ...] = ()
 
@@ -202,11 +204,21 @@ def _category_level_decisions(
             )
             continue
 
-        direct_rule = _classify_custom_rule(source_category, custom_rules) or classify_product(source_category)
-        if direct_rule and not has_category_conflict(source_category, direct_rule):
+        custom_direct = _classify_custom_rule(source_category, custom_rules)
+        direct_decision = classify_product_decision(source_category) if custom_direct is None else None
+        direct_rule = custom_direct or (direct_decision.rule if direct_decision else None)
+        direct_is_confident = custom_direct is not None or (
+            direct_decision is not None and direct_decision.confidence >= 0.78
+        )
+        if direct_rule and direct_is_confident and not has_category_conflict(source_category, direct_rule):
+            direct_reason = (
+                "自定义品类"
+                if custom_direct is not None
+                else f"{round(direct_decision.confidence * 100)}% · {direct_decision.reason}"
+            )
             decisions[source_category] = (
                 direct_rule,
-                f"原始分类统一匹配：{direct_rule.primary} → {direct_rule.name}",
+                f"原始分类统一匹配·{direct_reason}：{direct_rule.primary} → {direct_rule.name}",
                 False,
             )
             continue
@@ -214,10 +226,13 @@ def _category_level_decisions(
         category_rows = frame[categories.eq(source_category)]
         titles = category_rows.get("Title", pd.Series("", index=category_rows.index)).astype(str).str.strip()
         unique_titles = tuple(dict.fromkeys(value for value in titles if value))
-        title_rules = [
-            rule for title in unique_titles
-            if (rule := (_classify_custom_rule(title, custom_rules) or classify_product(title))) is not None
-        ]
+        title_rules = []
+        for title in unique_titles:
+            custom_title = _classify_custom_rule(title, custom_rules)
+            title_decision = classify_product_decision(title) if custom_title is None else None
+            title_rule = custom_title or (title_decision.rule if title_decision else None)
+            if title_rule is not None and (custom_title is not None or title_decision.confidence >= 0.78):
+                title_rules.append(title_rule)
         counts = Counter(rule.rule_id for rule in title_rules)
         if counts and len(title_rules) >= max(2, math.ceil(len(unique_titles) * 0.60)):
             best_id, best_count = counts.most_common(1)[0]
@@ -350,6 +365,33 @@ def _compute_fixed_pricing(
                     f"已改为 {rule.primary} → {rule.name}"
                 )
                 title_corrected = True
+            elif not category_is_manual and title:
+                title_decision = classify_product_decision(title)
+                title_rule = title_decision.rule
+                if title_rule is not None and title_decision.confidence >= 0.90:
+                    if rule is None:
+                        rule = title_rule
+                        match_method = (
+                            f"高置信标题匹配·{round(title_decision.confidence * 100)}%·"
+                            f"{title_decision.reason}：{title_rule.primary} → {title_rule.name}"
+                        )
+                        title_corrected = True
+                    elif base_rule(title_rule).rule_id != base_rule(rule).rule_id:
+                        if is_generic_rule(rule) and title_rule.primary == rule.primary:
+                            original = f"{rule.primary} → {rule.name}"
+                            rule = title_rule
+                            match_method = (
+                                f"标题细化·{round(title_decision.confidence * 100)}%："
+                                f"原始分类 {original}，核心商品词改为 {rule.primary} → {rule.name}"
+                            )
+                            title_corrected = True
+                        else:
+                            # A specific supplier category and a specific title
+                            # disagree. Do not guess or change its price.
+                            rule = None
+                            match_method = (
+                                f"原始分类与标题冲突：标题{title_decision.reason}，等待人工确认"
+                            )
         else:
             # Only products without a supplier category may fall back to their
             # own title. A populated supplier category is always decided once
@@ -357,8 +399,16 @@ def _compute_fixed_pricing(
             rule = None
             match_method = None
             if rule is None:
-                rule = _classify_custom_rule(title, custom_rules) or classify_product(title)
-                match_method = f"商品标题匹配：{rule.primary} → {rule.name}" if rule else None
+                custom_title = _classify_custom_rule(title, custom_rules)
+                title_decision = classify_product_decision(title) if custom_title is None else None
+                rule = custom_title or (title_decision.rule if title_decision else None)
+                if custom_title is not None:
+                    match_method = f"商品标题匹配·自定义品类：{rule.primary} → {rule.name}"
+                elif rule is not None:
+                    match_method = (
+                        f"商品标题匹配·{round(title_decision.confidence * 100)}%·"
+                        f"{title_decision.reason}：{rule.primary} → {rule.name}"
+                    )
             if rule is None:
                 rule, match_method = infer_similar_category(_group_text(positions))
         if rule is not None:
@@ -382,6 +432,7 @@ def _compute_fixed_pricing(
                 "Handle": handle_text,
                 "商品名称": title or handle_text,
                 "原始分类": _first(category_col, positions),
+                "未识别原因": match_method or "没有足够的品类证据，已保持原价",
                 "原售价": _first(price_col, row_positions),
                 "SKU数量": len(row_positions),
             })
