@@ -23,6 +23,7 @@
 - 识别引擎 V2 会区分核心商品词、包装词、风格词和性别词；Socks、Sneakers、Bra、Watch Band、Dress 等明确商品词优先于 Set、Accessories、Printed、Women’s 等修饰信息
 - 自动识别结果带有可信度与识别依据；核心词冲突或多个品类证据接近时采取保守模式，保持原价并等待人工确认
 - 核心商品词同时作为跨品类冲突拦截，例如 Bra 不允许进入 Accessories、Watch Band 不允许进入 Watches、Sneakers 不允许进入 Ties
+- 包袋采用独立核心词层级：Women's Accessories Bags、handbag、purse、hobo bag、top-handle purse 不再因 Women's 或 top 被识别为女装 Tops；Shoulder、Crossbody、Travel、Cosmetic、Tool 和 Gift Bag 仍按各自具体品类处理
 - 定价结果表支持选中单个错误商品并纠正品类；单品纠正不会影响同一原始分类中的其他商品
 - 定价结果表支持一次多选多个错误商品并批量纠正品类或恢复整组规则
 - 定价结果支持按 Handle、原始分类和识别品类搜索，并可按一级品类及折扣状态筛选

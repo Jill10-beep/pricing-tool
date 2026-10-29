@@ -500,6 +500,39 @@ class RecognitionV2Tests(unittest.TestCase):
         self.assertEqual(result.frame.iloc[0]["price"], "123.45")
         self.assertIn("冲突", result.unresolved_details[0]["未识别原因"])
 
+    def test_womens_accessories_bags_never_become_clothing_tops(self):
+        category = "Women's, Accessories, Bags"
+        titles = (
+            "everyday-woven-handbag",
+            "sequin-faux-leather-top-handle-purse",
+            "plush-magnetic-flap-hobo-bag",
+            "faux-fur-faux-leather-fawn-print-purse",
+            "faux-leather-shoulder-strap-zip-top-purse",
+        )
+        source = pd.DataFrame([
+            row(f"bag-{index}", title, category, "20", "0", f"B{index}", "")
+            for index, title in enumerate(titles)
+        ])
+        result = apply_fixed_pricing(source)
+        self.assertEqual(result.unresolved_handles, ())
+        self.assertEqual(set(result.product_summary["一级品类"]), {"Bags"})
+        self.assertNotIn("Tops", result.product_summary["识别品类"].tolist())
+        categories = dict(zip(result.product_summary["Handle"], result.product_summary["识别品类"]))
+        self.assertEqual(categories["bag-0"], "Handbags")
+        self.assertEqual(categories["bag-1"], "Handbags")
+        self.assertEqual(categories["bag-4"], "Shoulder Bags")
+
+    def test_special_bags_outrank_generic_bag_fallback(self):
+        expected = {
+            "Professional Tool Bag": "Tools and Home Improvement::Tool Bag",
+            "Reusable Gift Bag": "Holidays, Gifts and POD::Gift Packaging",
+            "Women's Cosmetic Bag": "Bags::Cosmetic Bags",
+            "Canvas Travel Bag": "Bags::Travel Bags",
+        }
+        for title, rule_id in expected.items():
+            with self.subTest(title=title):
+                self.assertEqual(classify_product(title).rule_id, rule_id)
+
 
 class StorageProductTests(unittest.TestCase):
     """A storage product is priced as storage, not as the thing it stores."""
