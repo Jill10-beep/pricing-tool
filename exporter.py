@@ -39,6 +39,82 @@ def export_csv(frame: pd.DataFrame, loaded: LoadedCsv, file_format: str = "suppl
     )
 
 
+def merge_exported_csv_files(
+    outputs: list[tuple[str, bytes]],
+) -> tuple[bytes | None, tuple[str, ...]]:
+    """Combine verified result CSVs into one import-safe product package.
+
+    The first file defines the exact schema, column order, delimiter, encoding
+    and line-ending style.  Data rows from subsequent files are appended as raw
+    CSV cells, so HTML, quotes and other non-price content are not rewritten.
+    Files with incompatible schemas or Handles repeated across different source
+    files are rejected instead of creating a package that a store may merge or
+    parse incorrectly.
+    """
+    if not outputs:
+        return None, ("没有可以合并的产品包。",)
+
+    loaded_outputs: list[tuple[str, LoadedCsv]] = []
+    issues: list[str] = []
+    for name, data in outputs:
+        try:
+            loaded_outputs.append((name, load_csv_bytes(data)))
+        except Exception as exc:  # noqa: BLE001 - any unreadable result is unsafe to merge
+            issues.append(f"{name} 无法重新读取：{exc}")
+    if issues:
+        return None, tuple(issues)
+
+    first_name, first = loaded_outputs[0]
+    columns = list(first.frame.columns)
+    delimiter = first.delimiter
+    for name, loaded in loaded_outputs[1:]:
+        if list(loaded.frame.columns) != columns:
+            issues.append(f"{name} 的字段或字段顺序与 {first_name} 不一致")
+        if loaded.delimiter != delimiter:
+            issues.append(f"{name} 的 CSV 分隔符与 {first_name} 不一致")
+
+    # Repeated Handles inside one file are normal variant rows. A Handle found
+    # in two different files would cause many store backends to merge products.
+    handle_owner: dict[str, str] = {}
+    duplicate_handles: set[str] = set()
+    if "Handle" in columns:
+        for name, loaded in loaded_outputs:
+            file_handles = {
+                value for value in loaded.frame["Handle"].astype(str).str.strip().tolist() if value
+            }
+            for handle in file_handles:
+                owner = handle_owner.get(handle)
+                if owner is not None and owner != name:
+                    duplicate_handles.add(handle)
+                else:
+                    handle_owner[handle] = name
+    if duplicate_handles:
+        preview = "、".join(sorted(duplicate_handles)[:5])
+        issues.append(
+            f"不同文件中存在重复 Handle（{preview}"
+            + (" 等" if len(duplicate_handles) > 5 else "")
+            + "），为避免后台错误合并商品，已停止生成合并包"
+        )
+    if issues:
+        return None, tuple(issues)
+
+    line_ending = next((value for value in first.row_endings if value), "\n")
+    merged_rows = [delimiter.join(first.raw_rows[0]) + line_ending]
+    expected_data_rows = 0
+    for _, loaded in loaded_outputs:
+        for raw_row in loaded.raw_rows[1:]:
+            merged_rows.append(delimiter.join(raw_row) + line_ending)
+            expected_data_rows += 1
+    merged = "".join(merged_rows).encode(first.encoding)
+    try:
+        reloaded = load_csv_bytes(merged)
+    except Exception as exc:  # noqa: BLE001
+        return None, (f"合并后的产品包无法重新读取：{exc}",)
+    if list(reloaded.frame.columns) != columns or len(reloaded.frame) != expected_data_rows:
+        return None, ("合并后的产品包字段或行数复核失败，已停止下载。",)
+    return merged, ()
+
+
 def verify_export(
     output_bytes: bytes,
     original_bytes: bytes,

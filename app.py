@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 from category_rules import CategoryRule, CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
-from exporter import export_csv, verify_export
+from exporter import export_csv, merge_exported_csv_files, verify_export
 from format_adapter import SHOPIFY, SUPPLIER, output_suffix, prepare_frame
 from pricing import apply_fixed_pricing, build_change_preview, validate_fixed_pricing
 from validator import validate_frame
@@ -514,6 +514,48 @@ def _render_pricing_assistant(status: dict[str, object], current_search: str) ->
         height=0,
         width=0,
     )
+
+
+def _render_batch_exports(
+    outputs: list[tuple[str, bytes]],
+    active_format: str,
+    key_prefix: str,
+) -> None:
+    """Show separate-ZIP and single-merged-CSV downloads side by side."""
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in outputs:
+            archive.writestr(name, data)
+
+    merged_bytes, merge_issues = merge_exported_csv_files(outputs)
+    download_columns = st.columns(2)
+    download_columns[0].download_button(
+        f"分别保存：下载 ZIP · {len(outputs)} 个文件",
+        data=zip_buffer.getvalue(),
+        file_name="正确价格产品包-分开保存.zip",
+        mime="application/zip",
+        key=f"{key_prefix}_zip_download",
+        use_container_width=True,
+    )
+    merged_name = "全部正确价格产品-Shopify.csv" if active_format == SHOPIFY else "全部正确价格产品.csv"
+    if merged_bytes is not None:
+        download_columns[1].download_button(
+            f"合并保存：下载一个 CSV · {len(outputs)} 个文件",
+            data=merged_bytes,
+            file_name=merged_name,
+            mime="text/csv",
+            key=f"{key_prefix}_merged_download",
+            use_container_width=True,
+        )
+        st.caption("合并包只保留一行表头，并按原文件顺序合并所有商品数据；上传店铺后台时直接使用这个 CSV。")
+    else:
+        download_columns[1].button(
+            "当前文件无法安全合并",
+            disabled=True,
+            key=f"{key_prefix}_merged_disabled",
+            use_container_width=True,
+        )
+        st.warning("合并包未生成：" + "；".join(merge_issues))
 
 
 assistant_action = str(st.query_params.get("assistant_action", ""))
@@ -1199,7 +1241,24 @@ for file_index, uploaded in enumerate(uploaded_files):
                 manual_corrections: dict[str, str | None] = {}
                 with st.expander("自动识别不正确？手动选择正确品类", expanded=False):
                     st.caption("选择后会重新计算整个原始分类的价格，并记住这次选择。没有错误时保持当前识别即可。")
-                    for _, recognized_row in recognized.iterrows():
+                    manual_category_search = st.text_input(
+                        "搜索需要修改的品类",
+                        placeholder="输入原始分类、当前一级品类或识别品类",
+                        key=f"manual_category_search_{file_index}",
+                    ).strip().casefold()
+                    visible_recognized = recognized
+                    if manual_category_search:
+                        manual_mask = pd.Series(False, index=recognized.index)
+                        for column in ("原始分类", "一级品类", "识别品类"):
+                            manual_mask |= recognized[column].fillna("").astype(str).str.casefold().str.contains(
+                                manual_category_search,
+                                regex=False,
+                            )
+                        visible_recognized = recognized[manual_mask]
+                    st.caption(f"当前显示 {len(visible_recognized)} / {len(recognized)} 个原始分类。")
+                    if visible_recognized.empty:
+                        st.info("没有符合搜索条件的品类。")
+                    for _, recognized_row in visible_recognized.iterrows():
                         source_category = str(recognized_row["原始分类"])
                         current_label = f"{recognized_row['一级品类']} → {recognized_row['识别品类']}"
                         choices = ["保持当前识别"]
@@ -1627,19 +1686,8 @@ if workflow_stage == "单页工作台":
     st.markdown('<div id="jill10-download"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">全部处理结果</div>', unsafe_allow_html=True)
     if completed_outputs:
-        st.warning("批量下载得到的是 ZIP 压缩包。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, data in completed_outputs:
-                archive.writestr(name, data)
-        st.download_button(
-            f"下载全部已完成产品包（ZIP）· {len(completed_outputs)} 个",
-            data=zip_buffer.getvalue(),
-            file_name="正确价格产品包.zip",
-            mime="application/zip",
-            key="single_page_batch_download",
-            use_container_width=True,
-        )
+        st.info("你可以选择保留多个独立产品包的 ZIP，也可以把全部正确结果合并为一个 CSV 产品包。ZIP 上传后台前必须先解压；合并 CSV 可以直接上传。")
+        _render_batch_exports(completed_outputs, file_format, "single_page_batch")
     else:
         st.info("目前没有通过校验、可以下载的产品包。请展开上面的文件查看提示并完成确认。")
 
@@ -1647,18 +1695,8 @@ if workflow_stage == "④ 下载结果":
     st.markdown('<div id="jill10-download"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-kicker">Batch Export</div><div class="section-title">批量导出</div>', unsafe_allow_html=True)
     if completed_outputs:
-        st.warning("批量下载得到的是 ZIP 压缩包，仅用于一次保存多个文件。上传店铺后台前必须先解压，并逐个上传里面的 CSV；不要把 ZIP 直接上传到店铺后台。")
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, data in completed_outputs:
-                archive.writestr(name, data)
-        st.download_button(
-            f"下载全部已完成产品包（ZIP，上传后台前需解压）· {len(completed_outputs)} 个",
-            data=zip_buffer.getvalue(),
-            file_name="正确价格产品包.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
+        st.info("你可以选择保留多个独立产品包的 ZIP，也可以把全部正确结果合并为一个 CSV 产品包。ZIP 上传后台前必须先解压；合并 CSV 可以直接上传。")
+        _render_batch_exports(completed_outputs, file_format, "stage_batch")
     else:
         st.info("目前没有可以下载的文件，请返回“③ 纠正异常”完成确认。")
 elif workflow_stage == "③ 纠正异常":

@@ -4,7 +4,7 @@ import pandas as pd
 
 from category_rules import CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, classify_product_decision, has_category_conflict, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
-from exporter import export_csv, verify_export
+from exporter import export_csv, merge_exported_csv_files, verify_export
 from format_adapter import SHOPIFY, prepare_frame
 from pricing import apply_fixed_pricing, parse_number, validate_fixed_pricing
 from validator import validate_frame
@@ -651,6 +651,41 @@ class ExportVerificationTests(unittest.TestCase):
 
     def test_semicolons_in_html_do_not_confuse_delimiter_detection(self):
         self.assertEqual(load_csv_bytes(SHOPIFY_SAMPLE).delimiter, ",")
+
+    def test_multiple_verified_results_can_merge_into_one_csv(self):
+        _, _, _, first = self._run()
+        second_source = SHOPIFY_SAMPLE.replace(b"dress-", b"second-")
+        _, _, _, second = self._run(second_source)
+        merged, issues = merge_exported_csv_files([
+            ("first.csv", first),
+            ("second.csv", second),
+        ])
+        self.assertEqual(issues, ())
+        self.assertIsNotNone(merged)
+        merged_frame = load_csv_bytes(merged).frame
+        self.assertEqual(len(merged_frame), 8)
+        self.assertIn("dress-a", set(merged_frame["Handle"]))
+        self.assertIn("second-a", set(merged_frame["Handle"]))
+        self.assertEqual(merged.decode("utf-8").count("Handle,Title,Body (HTML)"), 1)
+
+    def test_merge_stops_when_handles_repeat_across_files(self):
+        _, _, _, output = self._run()
+        merged, issues = merge_exported_csv_files([
+            ("first.csv", output),
+            ("duplicate.csv", output),
+        ])
+        self.assertIsNone(merged)
+        self.assertTrue(any("重复 Handle" in issue for issue in issues))
+
+    def test_merge_stops_when_schemas_are_incompatible(self):
+        _, _, _, output = self._run()
+        other = b"Handle,Title,Variant Price,Variant Compare At Price\nother,Other,19.99,0\n"
+        merged, issues = merge_exported_csv_files([
+            ("first.csv", output),
+            ("other.csv", other),
+        ])
+        self.assertIsNone(merged)
+        self.assertTrue(any("字段" in issue for issue in issues))
 
 
 if __name__ == "__main__":
