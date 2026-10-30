@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from category_rules import CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, classify_product_decision, has_category_conflict, infer_primary_category, infer_similar_category, rank_similar_categories
+from category_rules import CATEGORY_RULES, CategoryRule, is_storage_product, apply_plus_size, base_rule, classify_product, classify_product_decision, has_category_conflict, infer_primary_category, infer_similar_category, rank_similar_categories
 from csv_loader import load_csv_bytes, to_csv_bytes, variant_mask
 from exporter import export_csv, merge_exported_csv_files, verify_export
 from format_adapter import SHOPIFY, prepare_frame
@@ -472,6 +472,32 @@ class RecognitionV2Tests(unittest.TestCase):
                 self.assertEqual(decision.rule.rule_id, rule_id)
                 self.assertGreaterEqual(decision.confidence, 0.90)
                 self.assertIn("核心商品词", decision.reason)
+
+    def test_price_table_categories_automatically_have_recognition_terms(self):
+        """Every price-table row is reachable without a second manual registry."""
+        for rule in CATEGORY_RULES:
+            gender = "Women's " if rule.primary == "Women's Clothing" else "Men's " if rule.primary == "Men's Clothing" else ""
+            text = f"{gender}{rule.name}"
+            with self.subTest(rule_id=rule.rule_id):
+                decision = classify_product_decision(text)
+                self.assertIsNotNone(decision.rule)
+                self.assertEqual(decision.rule.rule_id, rule.rule_id)
+
+    def test_mixed_jewelry_supplier_category_is_refined_per_product(self):
+        source = pd.DataFrame([
+            row("bracelet", "Pearl Beaded Stretch Bracelet", "Women's, Accessories, Jewelry", "68", "0", "B1", ""),
+            row("ring", "Pave Simulated Diamond Ring", "Women's, Accessories, Jewelry", "68", "0", "R1", ""),
+            row("necklace", "Beaded Faceted Necklace", "Women's, Accessories, Jewelry", "68", "0", "N1", ""),
+        ])
+        result = apply_fixed_pricing(source)
+        self.assertEqual(result.unresolved_handles, ())
+        recognized = dict(zip(result.product_summary["Handle"], result.product_summary["识别品类"]))
+        self.assertEqual(recognized, {
+            "bracelet": "Bracelets",
+            "ring": "Rings",
+            "necklace": "Necklaces",
+        })
+        self.assertTrue(result.product_summary["匹配方式"].str.contains("高置信标题匹配").all())
 
     def test_core_product_conflicts_are_hard_rejections(self):
         jewelry = classify_product("Jewelry Sets")

@@ -422,6 +422,92 @@ _GENERIC_RULE_IDS = {
 }
 
 
+def _price_table_category_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
+    """Match explicit category nouns generated from every row in the price table.
+
+    The price table is the source of truth, so a category must not require a
+    second hand-maintained keyword list merely to become recognizable. Core
+    product terms still run first. Broad labels such as ``Tops`` and ``Sets``
+    remain conservative because those words are often modifiers.
+    """
+    normalized = _normalize(text)
+    is_women, is_men = _gender_flags(normalized)
+    matches: list[tuple[int, int, CategoryRule, str]] = []
+    for rule in CATEGORY_RULES:
+        if is_women and not is_men and rule.primary == "Men's Clothing":
+            continue
+        if is_men and not is_women and rule.primary == "Women's Clothing":
+            continue
+        # Derived for every price-table row, including sensible singular forms
+        # (Bracelets -> Bracelet, Necklaces -> Necklace, etc.).
+        terms = _default_keywords(rule.name)
+        matched = [term for term in terms if _contains(normalized, term)]
+        if not matched:
+            continue
+        strongest = max(
+            matched,
+            key=lambda term: (len(_normalize(term).split()), len(_normalize(term))),
+        )
+        token_count = len(_normalize(strongest).split())
+        specificity = token_count * 20 + len(_normalize(strongest))
+        # Specific nouns can rescue an individual product. Generic rows stay
+        # below that threshold to avoid "set" or "top" style false positives.
+        confidence_rank = 84 if rule.rule_id in _GENERIC_RULE_IDS else 94
+        matches.append((confidence_rank, specificity, rule, strongest))
+    matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return tuple(matches)
+
+
+def _exact_multiword_table_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
+    """Return only complete multiword price-table names.
+
+    This narrow pass is safe to run before legacy helpers: ``Car Seat
+    Organizer`` should beat the generic storage detector, while a lone word
+    such as ``Socks`` in ``Socks Organizer`` must not beat the container noun.
+    """
+    normalized = _normalize(text)
+    is_women, is_men = _gender_flags(normalized)
+    matches: list[tuple[int, int, CategoryRule, str]] = []
+    for rule in CATEGORY_RULES:
+        if is_women and not is_men and rule.primary == "Men's Clothing":
+            continue
+        if is_men and not is_women and rule.primary == "Women's Clothing":
+            continue
+        name = _normalize(rule.name)
+        if len(name.split()) < 2 or not _contains(normalized, name):
+            continue
+        confidence_rank = 84 if rule.rule_id in _GENERIC_RULE_IDS else 96
+        matches.append((confidence_rank, len(name.split()) * 20 + len(name), rule, name))
+    matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return tuple(matches)
+
+
+def _decision_from_table_matches(
+    matches: tuple[tuple[int, int, CategoryRule, str], ...],
+    normalized: str,
+) -> ClassificationDecision | None:
+    if not matches:
+        return None
+    confidence_rank, specificity, rule, evidence = matches[0]
+    competing = [item for item in matches[1:] if item[2].rule_id != rule.rule_id]
+    if competing:
+        second_rank, second_specificity, second_rule, second_evidence = competing[0]
+        if confidence_rank == second_rank and specificity == second_specificity:
+            return ClassificationDecision(
+                None,
+                0.46,
+                "价格表中多个具体品类命中了同等强度的词，等待人工确认",
+                (evidence, second_evidence),
+                (rule.rule_id, second_rule.rule_id),
+            )
+    return ClassificationDecision(
+        _apply_plus_size(rule, normalized),
+        confidence_rank / 100,
+        f"价格表明确品类词：{evidence}",
+        (evidence,),
+    )
+
+
 def _contains(text: str, keyword: str) -> bool:
     keyword = _normalize(keyword)
     negative = _NEGATIVE_RE.get(keyword)
@@ -475,6 +561,16 @@ def classify_product_decision(text: str) -> ClassificationDecision:
     normalized = _normalize(text)
     if not normalized:
         return ClassificationDecision(None, 0.0, "没有可用于识别的商品信息")
+
+    # Only a complete multiword price-table phrase runs before legacy helpers.
+    # This fixes long-category shadowing without letting a short contents word
+    # override a container product such as "Socks Organizer".
+    exact_table_decision = _decision_from_table_matches(
+        _exact_multiword_table_candidates(normalized), normalized
+    )
+    if exact_table_decision is not None:
+        return exact_table_decision
+
     if is_storage_product(normalized):
         rule = classify_storage_product(normalized)
         return ClassificationDecision(rule, 0.99, "核心商品词：收纳容器", ("storage/organizer",))
@@ -503,6 +599,14 @@ def classify_product_decision(text: str) -> ClassificationDecision:
             f"核心商品词：{evidence}",
             (evidence,),
         )
+
+    # Every remaining concrete category in the price table participates here,
+    # including singular forms such as Bracelet, Ring and Necklace.
+    table_decision = _decision_from_table_matches(
+        _price_table_category_candidates(normalized), normalized
+    )
+    if table_decision is not None:
+        return table_decision
 
     explicit_primary = infer_primary_category(normalized)
     rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
