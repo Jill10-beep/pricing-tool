@@ -306,6 +306,7 @@ SEMANTIC_EXAMPLES: dict[str, str] = {
 }
 
 
+@lru_cache(maxsize=32768)
 def _normalize(text: str) -> str:
     return " ".join(str(text).lower().replace("_", " ").replace("-", " ").split())
 
@@ -421,7 +422,35 @@ _GENERIC_RULE_IDS = {
     "Sports and Outdoor::Running Gear", "Automotive, Outdoor and Office::Camping Gear",
 }
 
+_RULES_BY_ID = {rule.rule_id: rule for rule in CATEGORY_RULES}
+_RULES_BY_PRIMARY = {
+    primary: tuple(rule for rule in CATEGORY_RULES if rule.primary == primary)
+    for primary in PRIMARY_CATEGORIES
+}
+_RULES_BY_NAME = {
+    name: tuple(rule for rule in CATEGORY_RULES if rule.name == name)
+    for name in {rule.name for rule in CATEGORY_RULES}
+}
+_PRICE_TABLE_TERM_SPECS = tuple(
+    (
+        rule,
+        _default_keywords(rule.name),
+        84 if rule.rule_id in _GENERIC_RULE_IDS else 94,
+    )
+    for rule in CATEGORY_RULES
+)
+_EXACT_MULTIWORD_TABLE_SPECS = tuple(
+    (
+        rule,
+        _normalize(rule.name),
+        84 if rule.rule_id in _GENERIC_RULE_IDS else 96,
+    )
+    for rule in CATEGORY_RULES
+    if len(_normalize(rule.name).split()) >= 2
+)
 
+
+@lru_cache(maxsize=16384)
 def _price_table_category_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
     """Match explicit category nouns generated from every row in the price table.
 
@@ -433,14 +462,13 @@ def _price_table_category_candidates(text: str) -> tuple[tuple[int, int, Categor
     normalized = _normalize(text)
     is_women, is_men = _gender_flags(normalized)
     matches: list[tuple[int, int, CategoryRule, str]] = []
-    for rule in CATEGORY_RULES:
+    for rule, terms, confidence_rank in _PRICE_TABLE_TERM_SPECS:
         if is_women and not is_men and rule.primary == "Men's Clothing":
             continue
         if is_men and not is_women and rule.primary == "Women's Clothing":
             continue
         # Derived for every price-table row, including sensible singular forms
         # (Bracelets -> Bracelet, Necklaces -> Necklace, etc.).
-        terms = _default_keywords(rule.name)
         matched = [term for term in terms if _contains(normalized, term)]
         if not matched:
             continue
@@ -452,12 +480,12 @@ def _price_table_category_candidates(text: str) -> tuple[tuple[int, int, Categor
         specificity = token_count * 20 + len(_normalize(strongest))
         # Specific nouns can rescue an individual product. Generic rows stay
         # below that threshold to avoid "set" or "top" style false positives.
-        confidence_rank = 84 if rule.rule_id in _GENERIC_RULE_IDS else 94
         matches.append((confidence_rank, specificity, rule, strongest))
     matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return tuple(matches)
 
 
+@lru_cache(maxsize=16384)
 def _exact_multiword_table_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
     """Return only complete multiword price-table names.
 
@@ -468,15 +496,13 @@ def _exact_multiword_table_candidates(text: str) -> tuple[tuple[int, int, Catego
     normalized = _normalize(text)
     is_women, is_men = _gender_flags(normalized)
     matches: list[tuple[int, int, CategoryRule, str]] = []
-    for rule in CATEGORY_RULES:
+    for rule, name, confidence_rank in _EXACT_MULTIWORD_TABLE_SPECS:
         if is_women and not is_men and rule.primary == "Men's Clothing":
             continue
         if is_men and not is_women and rule.primary == "Women's Clothing":
             continue
-        name = _normalize(rule.name)
-        if len(name.split()) < 2 or not _contains(normalized, name):
+        if not _contains(normalized, name):
             continue
-        confidence_rank = 84 if rule.rule_id in _GENERIC_RULE_IDS else 96
         matches.append((confidence_rank, len(name.split()) * 20 + len(name), rule, name))
     matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return tuple(matches)
@@ -508,6 +534,7 @@ def _decision_from_table_matches(
     )
 
 
+@lru_cache(maxsize=65536)
 def _contains(text: str, keyword: str) -> bool:
     keyword = _normalize(keyword)
     negative = _NEGATIVE_RE.get(keyword)
@@ -523,20 +550,21 @@ def _contains(text: str, keyword: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", text) is not None
 
 
+@lru_cache(maxsize=32768)
 def _gender_flags(normalized: str) -> tuple[bool, bool]:
     is_women = re.search(r"(?<![a-z0-9])(?:women|womens|women's|female)(?![a-z0-9])", normalized) is not None
     is_men = re.search(r"(?<![a-z0-9])(?:men|mens|men's|male)(?![a-z0-9])", normalized) is not None
     return is_women, is_men
 
 
+@lru_cache(maxsize=16384)
 def _core_product_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, str], ...]:
     """Return product-noun candidates, with modifiers and packaging words demoted."""
     normalized = _normalize(text)
-    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
     is_women, is_men = _gender_flags(normalized)
     matches: list[tuple[int, int, CategoryRule, str]] = []
     for rule_id, priority, terms in _CORE_PRODUCT_TERMS:
-        rule = rules_by_id[rule_id]
+        rule = _RULES_BY_ID[rule_id]
         if is_women and not is_men and rule.primary == "Men's Clothing":
             continue
         if is_men and not is_women and rule.primary == "Women's Clothing":
@@ -551,6 +579,7 @@ def _core_product_candidates(text: str) -> tuple[tuple[int, int, CategoryRule, s
     return tuple(matches)
 
 
+@lru_cache(maxsize=16384)
 def classify_product_decision(text: str) -> ClassificationDecision:
     """Recognize a product conservatively and expose confidence/evidence.
 
@@ -609,11 +638,10 @@ def classify_product_decision(text: str) -> ClassificationDecision:
         return table_decision
 
     explicit_primary = infer_primary_category(normalized)
-    rules_by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
     alias_matches: list[tuple[int, CategoryRule, str]] = []
     has_apparel_noun = any(_contains(normalized, noun) for noun in _APPAREL_NOUNS)
     for rule_id, aliases in ALIASES.items():
-        alias_rule = rules_by_id[rule_id]
+        alias_rule = _RULES_BY_ID[rule_id]
         if explicit_primary == "Footwear" and alias_rule.primary != "Footwear":
             continue
         matched = [
@@ -656,10 +684,12 @@ def classify_product_decision(text: str) -> ClassificationDecision:
     return ClassificationDecision(None, 0.0, "价格表中没有明确对应项")
 
 
+@lru_cache(maxsize=64)
 def rules_for_primary(primary: str) -> tuple[CategoryRule, ...]:
-    return tuple(rule for rule in CATEGORY_RULES if rule.primary == primary)
+    return _RULES_BY_PRIMARY.get(primary, ())
 
 
+@lru_cache(maxsize=16384)
 def infer_primary_category(text: str) -> str | None:
     normalized = _normalize(text)
     # Strong product nouns outrank gender. "Women's Shoes" is footwear, not
@@ -691,6 +721,7 @@ _PLUS_SIZE_RE = re.compile(r"(?<![a-z0-9])plus\s?size(?![a-z0-9])")
 _PLUS_SIZE_SURCHARGE = {"Women's Clothing": (2.0, 5.0), "Men's Clothing": (3.0, 3.0)}
 
 
+@lru_cache(maxsize=16384)
 def is_plus_size(text: str) -> bool:
     normalized = _normalize(text)
     return _PLUS_SIZE_RE.search(normalized) is not None or "大码" in normalized
@@ -771,6 +802,7 @@ _FURNITURE_RE = re.compile(
 )
 
 
+@lru_cache(maxsize=16384)
 def is_storage_product(text: str) -> bool:
     normalized = _normalize(text)
     if not normalized or _FURNITURE_RE.search(normalized):
@@ -778,6 +810,7 @@ def is_storage_product(text: str) -> bool:
     return bool(_STORAGE_INTENT_RE.search(normalized) or _STORED_PAIR_RE.search(normalized))
 
 
+@lru_cache(maxsize=8192)
 def classify_storage_product(text: str) -> CategoryRule:
     """Pick the most specific Kitchen and Storage rule; default Storage Boxes."""
     normalized = _normalize(text)
@@ -791,7 +824,7 @@ def classify_storage_product(text: str) -> CategoryRule:
             best = (max(lengths), rule)
     if best is not None:
         return best[1]
-    return next(rule for rule in CATEGORY_RULES if rule.rule_id == "Kitchen and Storage::Storage Boxes")
+    return _RULES_BY_ID["Kitchen and Storage::Storage Boxes"]
 
 
 def classify_product(text: str) -> CategoryRule | None:
@@ -832,6 +865,7 @@ def _weighted_vector(features: Counter[str], idf: dict[str, float]) -> dict[str,
     return {feature: value / norm for feature, value in vector.items()}
 
 
+@lru_cache(maxsize=8192)
 def rank_similar_categories(text: str, top_n: int = 3) -> tuple[tuple[CategoryRule, float], ...]:
     """Return approved price-table categories ordered by local similarity."""
     if not str(text).strip():
@@ -855,6 +889,7 @@ def rank_similar_categories(text: str, top_n: int = 3) -> tuple[tuple[CategoryRu
     return tuple(ranked[:top_n])
 
 
+@lru_cache(maxsize=8192)
 def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
     decision = classify_product_decision(text)
     if decision.rule:
@@ -873,15 +908,16 @@ def infer_similar_category(text: str) -> tuple[CategoryRule | None, str | None]:
     return None, None
 
 
+@lru_cache(maxsize=512)
 def resolve_rule(value: str) -> CategoryRule | None:
     value = LEGACY_RULE_IDS.get(value, value)
-    by_id = {rule.rule_id: rule for rule in CATEGORY_RULES}
-    if value in by_id:
-        return by_id[value]
-    matches = [rule for rule in CATEGORY_RULES if rule.name == value]
+    if value in _RULES_BY_ID:
+        return _RULES_BY_ID[value]
+    matches = _RULES_BY_NAME.get(value, ())
     return matches[0] if len(matches) == 1 else None
 
 
+@lru_cache(maxsize=32768)
 def has_category_conflict(text: str, rule: CategoryRule) -> bool:
     """Reject impossible cross-department matches before any price is written."""
     normalized = _normalize(text)

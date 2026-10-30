@@ -13,6 +13,10 @@ import zipfile
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+try:
+    from streamlit_local_storage import LocalStorage
+except ImportError:  # The pricing tool still starts if an optional UI add-on fails to install.
+    LocalStorage = None
 
 from category_rules import CategoryRule, CATEGORY_RULES, PRIMARY_CATEGORIES, infer_primary_category, rank_similar_categories, resolve_rule, rules_for_primary
 from csv_loader import display_titles, load_csv_bytes
@@ -26,6 +30,7 @@ st.set_page_config(page_title="JILL10 PRICING", page_icon="➕", layout="wide", 
 
 WORKSPACE_TTL_SECONDS = 6 * 60 * 60
 MAX_ACTIVE_WORKSPACES = 50
+BROWSER_CUSTOM_CATEGORIES_KEY = "jill10-custom-categories-v1"
 CATBOT_ASSET = Path(__file__).resolve().parent / "assets" / "j10-catbot.png"
 CATBOT_DATA_URL = "data:image/png;base64," + base64.b64encode(CATBOT_ASSET.read_bytes()).decode("ascii")
 
@@ -64,6 +69,53 @@ def _upload_name(uploaded: object) -> str:
 
 def _upload_bytes(uploaded: object) -> bytes:
     return uploaded["data"] if isinstance(uploaded, dict) else uploaded.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _cached_load_csv_bytes(data: bytes):
+    """Parse identical uploaded bytes once across Streamlit page reruns."""
+    return load_csv_bytes(data)
+
+
+def _validated_custom_categories(payload: object) -> dict[str, dict[str, object]]:
+    """Validate browser/imported custom categories before trusting them."""
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if not isinstance(payload, dict):
+        raise ValueError("custom categories must be an object")
+    validated: dict[str, dict[str, object]] = {}
+    built_in_ids = {rule.rule_id.casefold() for rule in CATEGORY_RULES}
+    for imported_id, values in payload.items():
+        if not isinstance(values, dict):
+            raise ValueError("invalid custom category")
+        primary = str(values["primary"]).strip()
+        name = str(values["name"]).strip()
+        minimum = float(values["minimum"])
+        maximum = float(values["maximum"])
+        rule_id = str(imported_id)
+        if (
+            primary not in PRIMARY_CATEGORIES
+            or not name
+            or "::" in name
+            or minimum <= 0
+            or maximum < minimum
+            or rule_id != f"{primary}::{name}"
+            or rule_id.casefold() in built_in_ids
+        ):
+            raise ValueError("invalid custom category")
+        keywords = [
+            str(value).strip()
+            for value in values.get("keywords", [name.lower()])
+            if str(value).strip()
+        ]
+        validated[rule_id] = {
+            "primary": primary,
+            "name": name,
+            "minimum": round(minimum, 2),
+            "maximum": round(maximum, 2),
+            "keywords": keywords or [name.lower()],
+        }
+    return validated
 
 st.markdown(
     """
@@ -233,6 +285,21 @@ workspace = store.setdefault(
 )
 workspace["updated"] = time.time()
 
+# Custom categories are personal settings, not temporary uploaded-file state.
+# Browser localStorage keeps them isolated per user and survives tab/browser
+# closure. The existing JSON download remains the portable backup for another
+# browser or computer.
+try:
+    browser_storage = LocalStorage(key="jill10_browser_storage_init") if LocalStorage else None
+    browser_custom_categories = (
+        browser_storage.getItem(BROWSER_CUSTOM_CATEGORIES_KEY)
+        if browser_storage is not None
+        else None
+    )
+except Exception:
+    browser_storage = None
+    browser_custom_categories = None
+
 if "price_range_overrides" not in st.session_state:
     st.session_state.price_range_overrides = dict(workspace.get("price_ranges", {}))
 if "price_editor_version" not in st.session_state:
@@ -243,8 +310,37 @@ if "product_category_mappings" not in st.session_state:
     st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
 if "custom_category_rules" not in st.session_state:
     st.session_state.custom_category_rules = dict(workspace.get("custom_categories", {}))
+if not st.session_state.get("browser_custom_categories_loaded", False):
+    try:
+        persisted_categories = (
+            _validated_custom_categories(browser_custom_categories)
+            if browser_custom_categories
+            else {}
+        )
+        if persisted_categories:
+            # Browser settings win if an old temporary workspace contains an
+            # earlier version of the same custom category.
+            st.session_state.custom_category_rules.update(persisted_categories)
+            workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
+            workspace["updated"] = time.time()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        st.session_state.browser_custom_category_warning = True
+    st.session_state.browser_custom_categories_loaded = True
 if "manual_review_files" not in st.session_state:
     st.session_state.manual_review_files = set(workspace.get("manual_review_files", []))
+
+
+def _persist_custom_categories() -> None:
+    """Save this user's custom categories in their current browser."""
+    if browser_storage is None:
+        return
+    browser_storage.setItem(
+        BROWSER_CUSTOM_CATEGORIES_KEY,
+        dict(st.session_state.custom_category_rules),
+        key="jill10_save_custom_categories",
+    )
+    # Give the browser component time to commit before an immediate st.rerun.
+    time.sleep(0.35)
 
 
 def _custom_rule_objects() -> tuple[CategoryRule, ...]:
@@ -310,6 +406,7 @@ def _undo_last_change() -> str | None:
     workspace["price_ranges"] = dict(snapshot["price_ranges"])
     workspace["custom_categories"] = dict(snapshot.get("custom_categories", {}))
     workspace["updated"] = time.time()
+    _persist_custom_categories()
     return str(snapshot["label"])
 
 
@@ -336,7 +433,7 @@ def _assistant_batch_status(files: list[object], active_format: str) -> dict[str
     marked_files = active_names & st.session_state.manual_review_files
     for item in files:
         try:
-            loaded = load_csv_bytes(_upload_bytes(item))
+            loaded = _cached_load_csv_bytes(_upload_bytes(item))
             source = prepare_frame(loaded.frame, active_format)
             result = apply_fixed_pricing(
                 source,
@@ -631,7 +728,9 @@ if navigation == "品类与价格规则":
         + "、".join(rule.name for rule in relationship_rules)
     )
     with st.expander("新增二级品类", expanded=False):
-        st.caption("新增后会立即出现在人工品类选择中；填写识别关键词后，也可以参与自动识别。")
+        st.caption("新增后会立即参与识别和定价，并自动保存在当前浏览器中；关闭网页后再次打开仍会保留。")
+        if st.session_state.pop("browser_custom_category_warning", False):
+            st.warning("浏览器里以前保存的自定义品类内容异常，已忽略；你可以重新导入 JSON 备份。")
         with st.form("add_custom_category_form", clear_on_submit=True):
             add_columns = st.columns(2)
             new_primary = add_columns[0].selectbox("所属一级品类", list(PRIMARY_CATEGORIES))
@@ -668,6 +767,7 @@ if navigation == "品类与价格规则":
                 }
                 workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
                 workspace["updated"] = time.time()
+                _persist_custom_categories()
                 st.toast(f"已新增二级品类：{clean_name}")
                 st.rerun()
         custom_rule_objects = _custom_rule_objects()
@@ -697,6 +797,7 @@ if navigation == "品类与价格规则":
                 workspace["mappings"] = dict(st.session_state.learned_category_mappings)
                 workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
                 workspace["updated"] = time.time()
+                _persist_custom_categories()
                 st.rerun()
         custom_tools = st.columns(2)
         custom_tools[0].download_button(
@@ -718,36 +819,13 @@ if navigation == "品类与价格规则":
             if st.session_state.get("last_custom_category_import") != import_digest:
                 try:
                     imported_categories = json.loads(import_bytes.decode("utf-8"))
-                    validated_categories = {}
-                    for imported_id, values in imported_categories.items():
-                        primary = str(values["primary"]).strip()
-                        name = str(values["name"]).strip()
-                        minimum = float(values["minimum"])
-                        maximum = float(values["maximum"])
-                        if (
-                            primary not in PRIMARY_CATEGORIES
-                            or not name
-                            or minimum <= 0
-                            or maximum < minimum
-                            or str(imported_id) != f"{primary}::{name}"
-                            or str(imported_id).casefold() in {rule.rule_id.casefold() for rule in CATEGORY_RULES}
-                        ):
-                            raise ValueError
-                        validated_categories[str(imported_id)] = {
-                            "primary": primary,
-                            "name": name,
-                            "minimum": round(minimum, 2),
-                            "maximum": round(maximum, 2),
-                            "keywords": [
-                                str(value).strip() for value in values.get("keywords", [name.lower()])
-                                if str(value).strip()
-                            ],
-                        }
+                    validated_categories = _validated_custom_categories(imported_categories)
                     _record_change(f"导入自定义品类 · {len(validated_categories)} 项")
                     st.session_state.custom_category_rules.update(validated_categories)
                     st.session_state.last_custom_category_import = import_digest
                     workspace["custom_categories"] = dict(st.session_state.custom_category_rules)
                     workspace["updated"] = time.time()
+                    _persist_custom_categories()
                     st.toast(f"已导入 {len(validated_categories)} 个二级品类")
                     st.rerun()
                 except Exception:
@@ -935,7 +1013,7 @@ if workflow_stage == "① 上传产品包":
     upload_overview = []
     for uploaded in uploaded_files:
         try:
-            loaded_overview = load_csv_bytes(_upload_bytes(uploaded))
+            loaded_overview = _cached_load_csv_bytes(_upload_bytes(uploaded))
             source_overview = prepare_frame(loaded_overview.frame, file_format)
             summary_overview = validate_frame(source_overview)
             upload_overview.append({
@@ -974,7 +1052,7 @@ review_file_indices: set[int] = set()
 if workflow_stage == "③ 纠正异常":
     for review_index, review_upload in enumerate(uploaded_files):
         try:
-            review_loaded = load_csv_bytes(_upload_bytes(review_upload))
+            review_loaded = _cached_load_csv_bytes(_upload_bytes(review_upload))
             review_source = prepare_frame(review_loaded.frame, file_format)
             review_result = apply_fixed_pricing(
                 review_source,
@@ -1027,7 +1105,7 @@ for file_index, uploaded in enumerate(uploaded_files):
         expanded=file_index == 0 or bool(assistant_search),
     ):
         try:
-            loaded = load_csv_bytes(uploaded_data)
+            loaded = _cached_load_csv_bytes(uploaded_data)
             source = prepare_frame(loaded.frame, file_format)
             before_summary = validate_frame(source)
             if before_summary.missing_columns:
