@@ -278,6 +278,7 @@ workspace = store.setdefault(
         "product_mappings": {},
         "price_ranges": {},
         "custom_categories": {},
+        "manual_price_ranges": {},
         "manual_review_files": [],
         "history": [],
         "updated": time.time(),
@@ -310,6 +311,8 @@ if "product_category_mappings" not in st.session_state:
     st.session_state.product_category_mappings = dict(workspace.get("product_mappings", {}))
 if "custom_category_rules" not in st.session_state:
     st.session_state.custom_category_rules = dict(workspace.get("custom_categories", {}))
+if "manual_price_range_rules" not in st.session_state:
+    st.session_state.manual_price_range_rules = dict(workspace.get("manual_price_ranges", {}))
 if not st.session_state.get("browser_custom_categories_loaded", False):
     try:
         persisted_categories = (
@@ -361,6 +364,25 @@ def _custom_rule_objects() -> tuple[CategoryRule, ...]:
     return tuple(rules)
 
 
+def _manual_range_rule_objects() -> tuple[CategoryRule, ...]:
+    """Build temporary rules entered directly for unresolved product groups."""
+    rules = []
+    for values in st.session_state.manual_price_range_rules.values():
+        rules.append(CategoryRule(
+            primary=str(values["primary"]),
+            name=str(values["name"]),
+            minimum=float(values["minimum"]),
+            maximum=float(values["maximum"]),
+            keywords=(str(values["name"]).lower(),),
+        ))
+    return tuple(rules)
+
+
+def _pricing_custom_rule_objects() -> tuple[CategoryRule, ...]:
+    """Rules available to pricing, including direct ranges not shown as categories."""
+    return _custom_rule_objects() + _manual_range_rule_objects()
+
+
 def _all_rules() -> tuple[CategoryRule, ...]:
     return tuple(CATEGORY_RULES) + _custom_rule_objects()
 
@@ -387,6 +409,7 @@ def _record_change(label: str) -> None:
         "product_mappings": dict(st.session_state.product_category_mappings),
         "price_ranges": dict(st.session_state.price_range_overrides),
         "custom_categories": dict(st.session_state.custom_category_rules),
+        "manual_price_ranges": dict(st.session_state.manual_price_range_rules),
     })
     del history[:-20]
 
@@ -400,11 +423,13 @@ def _undo_last_change() -> str | None:
     st.session_state.product_category_mappings = dict(snapshot["product_mappings"])
     st.session_state.price_range_overrides = dict(snapshot["price_ranges"])
     st.session_state.custom_category_rules = dict(snapshot.get("custom_categories", {}))
+    st.session_state.manual_price_range_rules = dict(snapshot.get("manual_price_ranges", {}))
     st.session_state.price_editor_version += 1
     workspace["mappings"] = dict(snapshot["mappings"])
     workspace["product_mappings"] = dict(snapshot["product_mappings"])
     workspace["price_ranges"] = dict(snapshot["price_ranges"])
     workspace["custom_categories"] = dict(snapshot.get("custom_categories", {}))
+    workspace["manual_price_ranges"] = dict(snapshot.get("manual_price_ranges", {}))
     workspace["updated"] = time.time()
     _persist_custom_categories()
     return str(snapshot["label"])
@@ -440,7 +465,7 @@ def _assistant_batch_status(files: list[object], active_format: str) -> dict[str
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
                 st.session_state.product_category_mappings,
-                _custom_rule_objects(),
+                _pricing_custom_rule_objects(),
             )
             priced_products += len(result.product_summary)
             attention_handles.update(str(value) for value in result.unresolved_handles)
@@ -702,6 +727,26 @@ navigation = st.radio(
     key="main_navigation",
 )
 
+# Streamlit removes widgets that are not rendered on the current branch. When
+# returning from the rules/guide page, the first rerun remounts the uploader;
+# a second rerun is sometimes needed before the retained server-side batch is
+# painted below it. Do that refresh automatically instead of making the user
+# press the browser refresh button.
+previous_navigation = st.session_state.get("last_rendered_navigation")
+st.session_state.last_rendered_navigation = navigation
+if (
+    navigation == "定价处理中心"
+    and previous_navigation in {"品类与价格规则", "使用说明"}
+    and any(workspace.get("files", {}).values())
+):
+    retained_count = sum(len(files) for files in workspace.get("files", {}).values())
+    st.session_state.restored_batch_count = retained_count
+    st.rerun()
+
+restored_batch_count = int(st.session_state.pop("restored_batch_count", 0) or 0)
+if navigation == "定价处理中心" and restored_batch_count:
+    st.toast(f"已恢复当前批次的 {restored_batch_count} 个产品包", icon="✅")
+
 if navigation == "使用说明":
     st.markdown('<div class="page-head"><div><div class="section-kicker">Guide</div><h2>使用说明</h2></div><p>三个步骤完成产品包改价</p></div>', unsafe_allow_html=True)
     guide_cols = st.columns(3)
@@ -857,6 +902,12 @@ else:
         label_visibility="collapsed",
         key=f"product_csv_uploader_{file_format}",
     )
+    retained_for_format = len(workspace.get("files", {}).get(file_format, []))
+    if retained_for_format and not new_uploads:
+        st.caption(
+            f"当前工作区已保留 {retained_for_format} 个产品包；上传框显示为空不代表文件丢失，"
+            "下方会自动恢复处理结果。"
+        )
 
 with st.expander(
     "编辑全部价格范围" if navigation == "品类与价格规则" else "快速修改价格范围",
@@ -1059,7 +1110,7 @@ if workflow_stage == "③ 纠正异常":
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
                 st.session_state.product_category_mappings,
-                _custom_rule_objects(),
+                _pricing_custom_rule_objects(),
             )
             review_similar = (
                 review_result.product_summary["匹配方式"].astype(str).str.contains("语义匹配", regex=False).any()
@@ -1125,7 +1176,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                 st.session_state.learned_category_mappings,
                 st.session_state.price_range_overrides,
                 st.session_state.product_category_mappings,
-                _custom_rule_objects(),
+                _pricing_custom_rule_objects(),
             )
 
             priced_count = len(pricing_result.product_summary)
@@ -1422,6 +1473,72 @@ for file_index, uploaded in enumerate(uploaded_files):
                             use_container_width=True,
                             hide_index=True,
                         )
+                    st.markdown("**不选择参考品类，直接按价格范围定价**")
+                    range_cols = st.columns(2)
+                    direct_minimum = range_cols[0].number_input(
+                        "最低价（USD）",
+                        min_value=0.01,
+                        max_value=999999.99,
+                        value=19.99,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"direct_minimum_{file_index}_{widget_key}",
+                    )
+                    direct_maximum = range_cols[1].number_input(
+                        "最高价（USD）",
+                        min_value=0.01,
+                        max_value=999999.99,
+                        value=29.99,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"direct_maximum_{file_index}_{widget_key}",
+                    )
+                    invalid_direct_range = direct_maximum < direct_minimum
+                    if invalid_direct_range:
+                        st.error("最高价不能低于最低价。")
+                    if st.button(
+                        "使用此价格范围并重新定价",
+                        key=f"save_direct_range_{file_index}_{widget_key}",
+                        disabled=invalid_direct_range,
+                        use_container_width=True,
+                    ):
+                        _record_change(
+                            f"未识别商品直接定价 · {group_label} · "
+                            f"${direct_minimum:.2f}–${direct_maximum:.2f}"
+                        )
+                        digest_source = (
+                            f"category:{category}"
+                            if category
+                            else "handles:" + "|".join(sorted(product_details["Handle"].astype(str)))
+                        )
+                        digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:12]
+                        rule_name = category if category else f"未分类商品 {digest}"
+                        manual_rule = CategoryRule(
+                            "自定义价格范围",
+                            rule_name,
+                            float(direct_minimum),
+                            float(direct_maximum),
+                            (rule_name.lower(),),
+                        )
+                        st.session_state.manual_price_range_rules[manual_rule.rule_id] = {
+                            "primary": manual_rule.primary,
+                            "name": manual_rule.name,
+                            "minimum": manual_rule.minimum,
+                            "maximum": manual_rule.maximum,
+                        }
+                        if category:
+                            st.session_state.learned_category_mappings[category] = manual_rule.rule_id
+                        else:
+                            for handle in product_details["Handle"].astype(str):
+                                st.session_state.product_category_mappings[handle] = manual_rule.rule_id
+                        workspace["manual_price_ranges"] = dict(st.session_state.manual_price_range_rules)
+                        workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                        workspace["product_mappings"] = dict(st.session_state.product_category_mappings)
+                        workspace["updated"] = time.time()
+                        st.rerun()
+                    st.caption(
+                        "系统仍会自动保证同一商品的颜色和尺寸同价，并沿用现有的价格尾数与折扣规则。"
+                    )
                     # Explicit supplier-category evidence outranks fuzzy title
                     # similarity (for example, "Men's ... Vests" must not be
                     # preselected as bedding because a title says "quilted").

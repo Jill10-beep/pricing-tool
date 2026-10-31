@@ -313,6 +313,24 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.product_summary["新售价"].between(32.99, 42.99).all())
         self.assertEqual(validate_fixed_pricing(result), ())
 
+    def test_unresolved_group_can_use_a_direct_price_range(self):
+        source = pd.DataFrame([
+            row("mystery-a", "Unlisted Product", "Unknown Supplier Type", "68", "0", "M-1", "https://example.com/m.jpg"),
+            row("mystery-a", "Unlisted Product", "Unknown Supplier Type", "68", "0", "M-2", "https://example.com/m.jpg"),
+        ])
+        manual_rule = CategoryRule(
+            "自定义价格范围", "Unknown Supplier Type", 21.99, 24.99, ("unknown supplier type",)
+        )
+        result = apply_fixed_pricing(
+            source,
+            category_overrides={"Unknown Supplier Type": manual_rule.rule_id},
+            custom_category_rules=(manual_rule,),
+        )
+        self.assertEqual(result.unresolved_handles, ())
+        self.assertTrue(result.product_summary["新售价"].between(21.99, 24.99).all())
+        self.assertEqual(result.frame.loc[result.frame["price"].ne(""), "price"].nunique(), 1)
+        self.assertEqual(validate_fixed_pricing(result), ())
+
     def test_discount_is_by_product_and_within_range(self):
         result = apply_fixed_pricing(sample_frame())
         discounted = result.product_summary[result.product_summary["新划线价"] > 0]
