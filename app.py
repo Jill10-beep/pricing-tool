@@ -1368,8 +1368,13 @@ for file_index, uploaded in enumerate(uploaded_files):
                     for rule in _all_rules()
                 ]
                 manual_corrections: dict[str, str | None] = {}
-                with st.expander("自动识别不正确？手动选择正确品类", expanded=False):
-                    st.caption("选择后会重新计算整个原始分类的价格，并记住这次选择。没有错误时保持当前识别即可。")
+                direct_range_corrections: dict[str, tuple[float, float]] = {}
+                direct_range_invalid = False
+                with st.expander("自动识别不正确？选择正确品类或直接填写价格范围", expanded=False):
+                    st.caption(
+                        "每个原始分类都可以改选参考品类，也可以只填写最低价和最高价。"
+                        "保存后会重新计算该分类的全部商品，并记住这次选择。"
+                    )
                     manual_category_search = st.text_input(
                         "搜索需要修改的品类",
                         placeholder="输入原始分类、当前一级品类或识别品类",
@@ -1390,7 +1395,7 @@ for file_index, uploaded in enumerate(uploaded_files):
                     for _, recognized_row in visible_recognized.iterrows():
                         source_category = str(recognized_row["原始分类"])
                         current_label = f"{recognized_row['一级品类']} → {recognized_row['识别品类']}"
-                        choices = ["保持当前识别"]
+                        choices = ["保持当前识别", "直接填写价格范围"]
                         if source_category in st.session_state.learned_category_mappings:
                             choices.append("恢复程序自动识别")
                         choices.extend(all_rule_labels)
@@ -1401,21 +1406,66 @@ for file_index, uploaded in enumerate(uploaded_files):
                         )
                         if selection == "恢复程序自动识别":
                             manual_corrections[source_category] = None
+                        elif selection == "直接填写价格范围":
+                            direct_cols = st.columns(2)
+                            direct_minimum = direct_cols[0].number_input(
+                                "最低价（USD）",
+                                min_value=0.01,
+                                max_value=999999.99,
+                                value=19.99,
+                                step=0.01,
+                                format="%.2f",
+                                key=f"recognized_direct_minimum_{file_index}_{source_category}",
+                            )
+                            direct_maximum = direct_cols[1].number_input(
+                                "最高价（USD）",
+                                min_value=0.01,
+                                max_value=999999.99,
+                                value=29.99,
+                                step=0.01,
+                                format="%.2f",
+                                key=f"recognized_direct_maximum_{file_index}_{source_category}",
+                            )
+                            if direct_maximum < direct_minimum:
+                                direct_range_invalid = True
+                                st.error(f"{source_category}：最高价不能低于最低价。")
+                            else:
+                                direct_range_corrections[source_category] = (
+                                    float(direct_minimum),
+                                    float(direct_maximum),
+                                )
                         elif selection not in {"保持当前识别", "恢复程序自动识别"}:
                             manual_corrections[source_category] = _all_rules()[all_rule_labels.index(selection)].rule_id
                     if st.button(
-                        "保存人工纠正并重新定价",
+                        "保存品类或价格范围并重新定价",
                         key=f"save_manual_{file_index}",
-                        disabled=not manual_corrections,
+                        disabled=(not manual_corrections and not direct_range_corrections) or direct_range_invalid,
                         use_container_width=True,
                     ):
-                        _record_change(f"纠正原始品类 · {len(manual_corrections)} 项")
+                        changed_count = len(manual_corrections) + len(direct_range_corrections)
+                        _record_change(f"纠正原始品类或价格范围 · {changed_count} 项")
                         for source_category, rule_id in manual_corrections.items():
                             if rule_id is None:
                                 st.session_state.learned_category_mappings.pop(source_category, None)
                             else:
                                 st.session_state.learned_category_mappings[source_category] = rule_id
+                        for source_category, price_range in direct_range_corrections.items():
+                            manual_rule = CategoryRule(
+                                "自定义价格范围",
+                                source_category,
+                                price_range[0],
+                                price_range[1],
+                                (source_category.lower(),),
+                            )
+                            st.session_state.manual_price_range_rules[manual_rule.rule_id] = {
+                                "primary": manual_rule.primary,
+                                "name": manual_rule.name,
+                                "minimum": manual_rule.minimum,
+                                "maximum": manual_rule.maximum,
+                            }
+                            st.session_state.learned_category_mappings[source_category] = manual_rule.rule_id
                         workspace["mappings"] = dict(st.session_state.learned_category_mappings)
+                        workspace["manual_price_ranges"] = dict(st.session_state.manual_price_range_rules)
                         workspace["updated"] = time.time()
                         st.rerun()
 

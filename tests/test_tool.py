@@ -331,6 +331,23 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result.frame.loc[result.frame["price"].ne(""), "price"].nunique(), 1)
         self.assertEqual(validate_fixed_pricing(result), ())
 
+    def test_recognized_category_can_be_replaced_by_a_direct_price_range(self):
+        source = pd.DataFrame([
+            row("bag-a", "Everyday Woven Handbag", "Women's, Accessories, Bags", "68", "0", "B-1", "https://example.com/b.jpg"),
+            row("bag-b", "Leather Shoulder Purse", "Women's, Accessories, Bags", "68", "0", "B-2", "https://example.com/b2.jpg"),
+        ])
+        manual_rule = CategoryRule(
+            "自定义价格范围", "Women's, Accessories, Bags", 31.99, 39.99, ("bags",)
+        )
+        result = apply_fixed_pricing(
+            source,
+            category_overrides={"Women's, Accessories, Bags": manual_rule.rule_id},
+            custom_category_rules=(manual_rule,),
+        )
+        self.assertEqual(result.unresolved_handles, ())
+        self.assertTrue(result.product_summary["新售价"].between(31.99, 39.99).all())
+        self.assertEqual(validate_fixed_pricing(result), ())
+
     def test_discount_is_by_product_and_within_range(self):
         result = apply_fixed_pricing(sample_frame())
         discounted = result.product_summary[result.product_summary["新划线价"] > 0]
